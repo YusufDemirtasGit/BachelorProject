@@ -28,11 +28,11 @@ public class Parser {
                 // For instance, it should look like: R259:97,258
                 if (inputStream.startsWith("R")) {
                     // Get the name of the rule
-                    String[] parts = inputStream.substring(1).split(":");
+                    String[] slicedInputStream = inputStream.substring(1).split(":");
                     // Set it as the Rule Name
-                    int ruleName = Integer.parseInt(parts[0]);
+                    int ruleName = Integer.parseInt(slicedInputStream[0]);
                     // Get the lhs and rhs of the Rule
-                    String[] ruleParts = parts[1].split(",");
+                    String[] ruleParts = slicedInputStream[1].split(",");
                     // Set the lhs
                     int lhs = Integer.parseInt(ruleParts[0]);
                     // Set the rhs
