@@ -28,6 +28,17 @@ jobs:
         id: timestamp
         run: echo "timestamp=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
 
+      - name: Get latest Alpha release number
+        id: get_alpha_number
+        run: |
+          latest=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases | grep -o 'Alpha [0-9]\+' | sort -V | tail -n 1 | grep -o '[0-9]\+')
+          if [ -z "$latest" ]; then
+            next=1
+          else
+            next=$((latest + 1))
+          fi
+          echo "next_alpha=$next" >> $GITHUB_OUTPUT
+
       - name: Build and Test with unique snapshot
         run: |
           ./gradlew clean build test -PTIMESTAMP=${{ steps.timestamp.outputs.timestamp }}
@@ -42,8 +53,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: Alpha
-          name: Release-${{ steps.timestamp.outputs.timestamp }}
+          tag_name: Alpha-${{ steps.get_alpha_number.outputs.next_alpha }}
+          name: Alpha ${{ steps.get_alpha_number.outputs.next_alpha }}
           files: release/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
