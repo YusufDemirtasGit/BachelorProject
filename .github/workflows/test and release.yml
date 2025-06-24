@@ -7,9 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build, Test, and Release
     runs-on: ubuntu-latest
-
     permissions:
       contents: write
 
@@ -24,16 +22,17 @@ jobs:
           distribution: 'oracle'
 
       - name: Grant execute permission for Gradle
-        run: chmod +x gradlew
+        run: chmod +x BachelorProject/gradlew
 
       - name: Build and Test
-        run: ./gradlew clean build test
+        run: cd BachelorProject && ./gradlew clean build test
 
       - name: Prepare release artifacts
         run: |
-          mkdir -p release
-          cp BachelorProject/decoder.c release/
-          cp build/libs/*.jar release/
+          mkdir release
+          cp BachelorProject/decoder release/
+          cp BachelorProject/build/libs/*.jar release/
+          ls -lh release/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
