@@ -31,9 +31,6 @@ jobs:
           timestamp=$(TZ="Europe/Berlin" date +%Y%m%d-%H%M%S)
           echo "timestamp=$timestamp" >> $GITHUB_OUTPUT
 
-
-      
-
       - name: Get latest Alpha release number( First one generated manually)
         id: get_alpha_number
         run: |
@@ -53,6 +50,7 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir release
+          cp encoder release/
           cp decoder release/
           cp build/libs/*.jar release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           ls -lh release/
