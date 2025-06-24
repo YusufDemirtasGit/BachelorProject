@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - 'master'  
+      - 'master'  # Trigger on any branch push
 
 jobs:
   build:
@@ -25,13 +25,13 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build and Test
-        run: cd BachelorProject && ./gradlew clean build test
+        run: ./gradlew clean build test
 
       - name: Prepare release artifacts
         run: |
           mkdir release
-          cp BachelorProject/decoder release/
-          cp BachelorProject/build/libs/*.jar release/
+          cp decoder release/
+          cp build/libs/*.jar release/
           ls -lh release/
 
       - name: Create GitHub Release
