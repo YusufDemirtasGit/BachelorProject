@@ -31,7 +31,8 @@ jobs:
       - name: Get latest Alpha release number
         id: get_alpha_number
         run: |
-          latest=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases | grep -o 'Alpha [0-9]\+' | sort -V | tail -n 1 | grep -o '[0-9]\+')
+          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/releases)
+          latest=$(echo "$response" | grep -o 'Alpha [0-9]\+' | sort -V | tail -n 1 | grep -o '[0-9]\+')
           if [ -z "$latest" ]; then
             next=1
           else
