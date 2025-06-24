@@ -11,7 +11,7 @@ import static java.awt.SystemColor.text;
 public class Main {
     public static void main(String[] args) throws IOException, InterruptedException {
         Scanner scanner = new Scanner(System.in);
-
+        //filter the txt.rp in the end?
         System.out.println("Insert a grammar compressed string in the specified form.");
         System.out.println("Enter the input file:");
 //TODO: bake in the compression
