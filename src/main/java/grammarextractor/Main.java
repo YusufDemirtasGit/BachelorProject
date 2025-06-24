@@ -9,13 +9,25 @@ import java.util.*;
 import static java.awt.SystemColor.text;
 
 public class Main {
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, InterruptedException {
         Scanner scanner = new Scanner(System.in);
 
         System.out.println("Insert a grammar compressed string in the specified form.");
         System.out.println("Enter the input file:");
+//TODO: bake in the compression
         Path File = Paths.get(scanner.nextLine());
-        Parser.ParsedGrammar parsedGrammar= Parser.parseFile(File);
+
+        ProcessBuilder builder = new ProcessBuilder("./decoder", File.toString(),"input_translated.txt");
+        builder.inheritIO(); // Optional: should let the decoder print to console
+        Process process = builder.start();
+        int exitCode = process.waitFor();
+        if (exitCode == 0) {
+            System.out.println("Binary file translated successfully.");
+        } else {
+            System.err.println("Decoder failed with exit code " + exitCode);
+        }
+
+        Parser.ParsedGrammar parsedGrammar= Parser.parseFile(Paths.get("input_translated.txt"));
         Map<Integer, Parser.GrammarRule<Integer, Integer>> grammarRules = parsedGrammar.grammarRules();
         List<Integer> compressedString = parsedGrammar.sequence();
         System.out.println("Compressed Grammar has been successfully parsed");
