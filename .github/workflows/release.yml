@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir release
           cp decoder release/
-          cp build/libs/*.jar release/
+          cp build/libs/*.jar release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           ls -lh release/
 
       - name: Create GitHub Release
@@ -46,4 +46,4 @@ jobs:
           name: Release-${{ steps.timestamp.outputs.timestamp }}
           files: release/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
