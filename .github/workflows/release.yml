@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - 'master'  # Trigger on any branch push
+      - 'master'  
 
 jobs:
   build:
@@ -24,8 +24,13 @@ jobs:
       - name: Grant execute permission for Gradle
         run: chmod +x gradlew
 
-      - name: Build and Test
-        run: ./gradlew clean build test
+      - name: Generate timestamp
+        id: timestamp
+        run: echo "timestamp=$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Build and Test with unique snapshot
+        run: |
+          ./gradlew clean build test -PTIMESTAMP=${{ steps.timestamp.outputs.timestamp }}
 
       - name: Prepare release artifacts
         run: |
@@ -38,7 +43,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Alpha
-          name: Pre-Release ${{ github.run_number }}
+          name: Release-${{ steps.timestamp.outputs.timestamp }}
           files: release/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
