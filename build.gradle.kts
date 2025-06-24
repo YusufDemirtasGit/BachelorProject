@@ -4,7 +4,7 @@ plugins {
 
 tasks.jar {
     manifest {
-        attributes["Main-Class"] = "BachelorProject.src.main.java.grammarextractor.Main"
+        attributes["Main-Class"] = "grammarextractor.Main"
     }
 }
 
