@@ -4,9 +4,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
 import java.io.*;
-import java.util.*;
-
-import static java.awt.SystemColor.text;
 
 public class Main {
     public static void main(String[] args) throws IOException, InterruptedException {
