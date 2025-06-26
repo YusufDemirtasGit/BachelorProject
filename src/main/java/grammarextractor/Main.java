@@ -13,7 +13,7 @@ public class Main {
             System.out.println("1. Compress");
             System.out.println("2. Decompress");
             System.out.println("3. Roundtrip");
-            System.out.println("3. Exit");
+            System.out.println("99. Exit");
 
             System.out.print("Enter your choice: ");
             int choice;
@@ -145,7 +145,8 @@ public class Main {
                 if (line1 == null && line2 == null) {
                     return true; // Both files ended, contents identical
                 }
-                if (line1 == null || line2 == null || !line1.equals(line2)) {
+                //it should not be necessary to check for line2 for null
+                if (line1 == null || !line1.equals(line2)) {
                     return false;
                 }
             }
