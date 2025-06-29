@@ -33,7 +33,7 @@ public class Main {
                     Process process1 = builder1.start();
                     int exitCode1 = process1.waitFor();
                     if (exitCode1 == 0) {
-                        System.out.println("\nInput file translated successfully. The Resulting binary file is saved as:" + fileToCompress.toString() + ".rp");
+                        System.out.println("\nInput file translated successfully. The Resulting binary file is saved as:" + fileToCompress + ".rp");
                     } else {
                         System.err.println("\nEncoder failed with exit code " + exitCode1);
                     }
@@ -88,13 +88,13 @@ public class Main {
                     Process process3 = builder3.start();
                     int exitCode3 = process3.waitFor();
                     if (exitCode3 == 0) {
-                        System.out.println("\nInput file translated successfully. The Resulting binary file is saved as:" + fileToTest.toString() + ".rp");
+                        System.out.println("\nInput file translated successfully. The Resulting binary file is saved as:" + fileToTest + ".rp");
                     } else {
                         System.err.println("\nEncoder failed with exit code " + exitCode3);
                     }
 
-                    Path fileToTranslate2 = Paths.get(fileToTest.toString()+".rp");
-                    ProcessBuilder builder4 = new ProcessBuilder("./decoder", fileToTranslate2.toString(), "test_translated.txt");
+                    Path fileToTranslate2 = Paths.get(fileToTest+".rp");
+                    ProcessBuilder builder4 = new ProcessBuilder("./decoder", fileToTranslate2.toString() , "test_translated.txt");
                     builder4.inheritIO(); // Optional: should let the decoder print to console
                     Process process4 = builder4.start();
                     int exitCode4 = process4.waitFor();
