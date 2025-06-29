@@ -1,4 +1,5 @@
 package grammarextractor;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
@@ -6,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 public class Parser {
-    static class GrammarRule<A,B> {
+    static class GrammarRule<A, B> {
         public A lhs;
         public B rhs;
         public int length;
@@ -58,5 +59,27 @@ public class Parser {
             }
         }
         return new ParsedGrammar(GrammarRules, ParsedSequence);
+    }
+//These are for the Recompression. Probably will be useful later on
+    public static int getFirst(int symbol, ParsedGrammar parsedGrammar) {
+        if (symbol < 256) {
+            return symbol;
+        }
+        GrammarRule<Integer, Integer> rule = parsedGrammar.grammarRules().get(symbol);
+        if (rule == null) {
+            throw new IllegalArgumentException("Rule for symbol " + symbol + " not found.");
+        }
+        return getFirst(rule.lhs, parsedGrammar);
+    }
+
+    public static int getLast(int symbol, ParsedGrammar parsedGrammar) {
+        if (symbol < 256) {
+            return symbol;
+        }
+        GrammarRule<Integer, Integer> rule = parsedGrammar.grammarRules().get(symbol);
+        if (rule == null) {
+            throw new IllegalArgumentException("Rule for symbol " + symbol + " not found.");
+        }
+        return getLast(rule.rhs, parsedGrammar);
     }
 }
