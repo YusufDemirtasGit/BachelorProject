@@ -21,7 +21,7 @@ public class Decompressor {
             if (rule == null) {
                 throw new IllegalArgumentException("Missing rule for symbol: " + symbol);
             }
-            // Idea is to expand the left hand side until we hit a terminal then continue with right hand size
+            // Idea is to expand the left-hand side until we hit a terminal, then continue with right-hand size
             expandLeaf(rule.lhs, grammar, output);
             expandLeaf(rule.rhs, grammar, output);
         }
