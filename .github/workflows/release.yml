@@ -1,0 +1,65 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - 'master'  
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 24
+        uses: actions/setup-java@v4
+        with:
+          java-version: '24'
+          distribution: 'oracle'
+
+      - name: Grant execute permission for Gradle
+        run: chmod +x gradlew
+        
+      - name: Generate timestamp
+        id: timestamp
+        run: |
+          TZ="Europe/Berlin" date
+          timestamp=$(TZ="Europe/Berlin" date +%Y%m%d-%H%M%S)
+          echo "timestamp=$timestamp" >> $GITHUB_OUTPUT
+
+      - name: Get latest Alpha release number( First one generated manually)
+        id: get_alpha_number
+        run: |
+          response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/${{ github.repository }}/releases)
+          latest=$(echo "$response" | grep -o 'Alpha [0-9]\+' | sort -V | tail -n 1 | grep -o '[0-9]\+')
+          if [ -z "$latest" ]; then
+            next=1
+          else
+            next=$((latest + 1))
+          fi
+          echo "next_alpha=$next" >> $GITHUB_OUTPUT
+
+      - name: Build and Test with unique snapshot
+        run: |
+          ./gradlew clean build test -PTIMESTAMP=${{ steps.timestamp.outputs.timestamp }}
+
+      - name: Prepare release artifacts
+        run: |
+          mkdir release
+          cp encoder release/
+          cp decoder release/
+          cp build/libs/*.jar release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
+          ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: Alpha-${{ steps.get_alpha_number.outputs.next_alpha }}
+          name: Alpha ${{ steps.get_alpha_number.outputs.next_alpha }}
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

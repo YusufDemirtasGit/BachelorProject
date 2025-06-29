@@ -4,14 +4,17 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.List;
 import java.util.Map;
+
 public class Parser {
-    static class GrammarRule<A,B>{
+    static class GrammarRule<A,B> {
         public A lhs;
         public B rhs;
+        public int length;
 
-        public GrammarRule(A lhs, B rhs){
+        public GrammarRule(A lhs, B rhs, int length) {
             this.lhs = lhs;
             this.rhs = rhs;
+            this.length = length;
         }
     }
 
@@ -37,7 +40,14 @@ public class Parser {
                     int lhs = Integer.parseInt(ruleParts[0]);
                     // Set the rhs
                     int rhs = Integer.parseInt(ruleParts[1]);
-                    GrammarRules.put(ruleName, new GrammarRule<>(lhs, rhs));
+
+                    // Calculate the length of the rule
+                    // Length is 1 if terminal, otherwise check the length of rhs of lhs respectively
+                    int lhsLength = (lhs < 256) ? 1 : GrammarRules.get(lhs).length;
+                    int rhsLength = (rhs < 256) ? 1 : GrammarRules.get(rhs).length;
+                    int totalLength = lhsLength + rhsLength;
+
+                    GrammarRules.put(ruleName, new GrammarRule<>(lhs, rhs, totalLength));
                 } else if (inputStream.startsWith("SEQ:")) {
                     // For instance, it should look like: SEQ:259,99,97,100,259
                     String[] sequence = inputStream.substring(4).split(",");
@@ -48,5 +58,5 @@ public class Parser {
             }
         }
         return new ParsedGrammar(GrammarRules, ParsedSequence);
-}
+    }
 }
