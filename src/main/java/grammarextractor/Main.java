@@ -13,6 +13,7 @@ public class Main {
             System.out.println("1. Compress");
             System.out.println("2. Decompress");
             System.out.println("3. Roundtrip");
+            System.out.println("4. Extract Excerpt(Not Yet fully implemented)");
             System.out.println("99. Exit");
 
             System.out.print("Enter your choice: ");
@@ -119,6 +120,34 @@ public class Main {
                         System.err.println("Test failed, Input and Output are not identical");
                     }
                     break;
+                case 4:  // not yet fully implemented!
+                    System.out.println("Enter the file name of the compressed grammar:");
+                    String compressedGrammarFileName = scanner.nextLine().trim();
+                    System.out.println("Enter the start pos for the grammar excerpt:");
+                    int from = Integer.parseInt(scanner.nextLine().trim());
+                    System.out.println("Enter the end pos for the grammar excerpt:");
+                    int to = Integer.parseInt(scanner.nextLine().trim());
+
+                    System.out.println("Parsing the grammar...");
+                    Parser.ParsedGrammar grammar = Parser.parseFile(Paths.get(compressedGrammarFileName));
+
+                    Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar, from, to);
+                    Extractor.writeGrammarToFile(excerpt, "extracted_grammar.txt");
+
+                    try (PrintWriter out = new PrintWriter("excerpt_output.txt")) {
+                        out.println(excerpt);
+                        System.out.println("\nDecompression successful. Resulting text file is saved as output.txt");
+                    } catch (FileNotFoundException e) {
+                        throw new FileNotFoundException();
+                    }
+
+                    //For debug purposes. The whole rule does not need to get dumped in the console in the final version
+
+                    for (int rule : excerpt.sequence()) {
+                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
+                    }
+                    break;
+
 
 
                 case 99:
