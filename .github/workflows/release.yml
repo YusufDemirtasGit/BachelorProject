@@ -63,6 +63,8 @@ jobs:
 
           # Give execute permissions to encoder and decoder
           chmod +x encoder decoder
+          #Delete the zone identifier files
+          find . -type f -name "Zone.Identifier" -delete
 
           # Run the JAR file
           java -jar $JAR_NAME
