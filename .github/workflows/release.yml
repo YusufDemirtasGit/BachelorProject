@@ -68,7 +68,11 @@ jobs:
           java -jar $JAR_NAME
           EOF
 
+          # Ensure run.sh is executable
           chmod +x release/run.sh
+
+          # Confirm all permissions before archiving
+          ls -l release/
 
           ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
 
