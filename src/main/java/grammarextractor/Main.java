@@ -144,9 +144,9 @@ public class Main {
 
                     //For debug purposes. The whole rule does not need to get dumped in the console in the final version
 
-                    for (int rule : excerpt.sequence()) {
-                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
-                    }
+//                    for (int rule : excerpt.sequence()) {
+//                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
+//                    }
                     break;
                 case 7:
                     System.out.println("\nPlease enter the input file you would like to compress:");
