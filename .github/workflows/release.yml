@@ -63,6 +63,9 @@ jobs:
 
           # Give execute permissions to encoder and decoder
           chmod +x encoder decoder
+
+          #Create the required files folder
+          mkdir files
           
           #Delete the zone identifier files
           find . -type f -name "Zone.Identifier" -delete
