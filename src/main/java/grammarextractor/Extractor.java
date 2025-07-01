@@ -27,8 +27,9 @@ public class Extractor {
             if (totalTraversed >= end) {
                 break;
             }
-
+            //This is a necessary step because of the way I have processed the grammar rules. Non-terminals have the attribute length, but the terminals don't. So we need to define it here.
             int symLength = (sym < 256) ? 1 : parsedInput.grammarRules().get(sym).length;
+
             // Does the symbol contribute to the excerpt? If yes, then process it
             if (totalTraversed + symLength > start) {
                 processExcerpt(sym, parsedInput, excerptRules, excerptSeq, start - totalTraversed, end - totalTraversed);
@@ -56,9 +57,9 @@ public class Extractor {
             throw new IllegalArgumentException("Rule for symbol " + symbol + " not found in the parsed grammar.");
         }
         //Determine the length of the left child.
-        //If it is a terminal 1 otherwise get the length from the Grammar Rules
+        //If it is a terminal 1,otherwise get the length from the Grammar Rules
         int leftSize = (ruleData.lhs < 256) ? 1 : parsedInput.grammarRules().get(ruleData.lhs).length;
-        //Navigate to the left child node recursively. If the part we search falls under it then change the parameters accordingly.
+        //Navigate to the left child node recursively. If the part we search falls under it, then change the parameters accordingly.
         if (startOffset < leftSize) {
             processExcerpt(ruleData.lhs, parsedInput, excerptRules, excerptSeq, startOffset, Math.min(endOffset, leftSize));
         }
