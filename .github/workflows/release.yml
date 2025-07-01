@@ -51,7 +51,9 @@ jobs:
         run: |
           mkdir release
           cp encoder release/
+          chmod +x release/encoder
           cp decoder release/
+          chmod +x release/decoder
           cp build/libs/*.jar release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           ls -lh release/
 
