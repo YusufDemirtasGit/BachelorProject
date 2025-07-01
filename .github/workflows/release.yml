@@ -53,10 +53,11 @@ jobs:
           cp encoder release/
           cp decoder release/
           chmod +x release/encoder release/decoder
-          cp build/libs/*.jar release/
           
-          JAR_NAME=$(ls release/*.jar | xargs basename)
-          ARCHIVE_NAME=${JAR_NAME%.jar}.tar.gz
+          JAR_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
+          cp build/libs/*.jar release/$JAR_NAME
+          
+          ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
           
           cd release
           tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME
@@ -68,6 +69,6 @@ jobs:
         with:
           tag_name: Alpha-${{ steps.get_alpha_number.outputs.next_alpha }}
           name: Alpha ${{ steps.get_alpha_number.outputs.next_alpha }}
-          files: release/*.tar.gz
+          files: release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
