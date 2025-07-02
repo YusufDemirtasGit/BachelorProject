@@ -3,78 +3,195 @@ package grammarextractor;
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class Extractor {
 
-
     public static Parser.ParsedGrammar extractExcerpt(Parser.ParsedGrammar parsedInput, int start, int end) throws IllegalArgumentException {
-        if (start >= parsedInput.sequence().size()) {
-            throw new IllegalArgumentException("Start position must be smaller than the length of the input sequence.");
-        } else if (start >= end) {
-            throw new IllegalArgumentException("Start position must be smaller than end position.");
+        int uncompressedSize = getUncompressedSize(parsedInput);
+        if ( end > uncompressedSize ) {
+            throw new IllegalArgumentException("Start and end must define a valid range within the uncompressed sequence.");
+        }
+        else if(start < 0 ){
+            throw new IllegalArgumentException("Start must be greater than zero.");
+        }
+        else if(start > end){
+            throw new IllegalArgumentException("Start must be less than or equal to end.");
         }
 
-        List<Integer> excerptSeq = new ArrayList<>();
+        List<Integer> excerptSequence = new ArrayList<>();
         Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules = new HashMap<>();
+
         int totalTraversed = 0;
+        int startIndex = 0;
+        int endIndex = 0;
 
-        for (int sym : parsedInput.sequence()) {
-            //If the end is reached, stop the loop.
-            if (totalTraversed >= end) {
-                break;
-            }
-            //This is a necessary step because of the way I have processed the grammar rules. Non-terminals have the attribute length, but the terminals don't. So we need to define it here.
-            int symLength = (sym < 256) ? 1 : parsedInput.grammarRules().get(sym).length;
-
-            // Does the symbol contribute to the excerpt? If yes, then process it
-            if (totalTraversed + symLength > start) {
-                processExcerpt(sym, parsedInput, excerptRules, excerptSeq, start - totalTraversed, end - totalTraversed);
-            }
-            //Update the total traversed length.
-            totalTraversed += symLength;
+        // Find which symbol has the start point in it by going through the sequence and find whether next symbol would have us exceed the start pos
+        while (startIndex < parsedInput.sequence().size() && totalTraversed + getSymbolLength(parsedInput, parsedInput.sequence().get(startIndex)) <= start) {
+            totalTraversed += getSymbolLength(parsedInput, parsedInput.sequence().get(startIndex));
+            startIndex++;
         }
-        // New modified grammar structure for the excerpt
-        return new Parser.ParsedGrammar(excerptRules, excerptSeq);
-    }
-    // Main Idea: Recursively go through a symbol to find the relevant part for the extraction
-    private static void processExcerpt(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules, List<Integer> excerptSeq, int startOffset, int endOffset) {
-    //Check for a terminal
-        if (symbol < 256) {
-            //Is it inside the boundaries? Then add it to our result.Otherwise skip it
-            if (startOffset <= 0 && endOffset > 0) {
-                excerptSeq.add(symbol);
+        int totalTraversedBeforeStart = totalTraversed;
+
+        // Find symbol at end boundary
+        totalTraversed = 0;
+        while (endIndex < parsedInput.sequence().size() && totalTraversed + getSymbolLength(parsedInput, parsedInput.sequence().get(endIndex)) < end) {
+            totalTraversed += getSymbolLength(parsedInput, parsedInput.sequence().get(endIndex));
+            endIndex++;
+        }
+
+        int totalTraversedBeforeEnd = totalTraversed;
+        int endSymbolLength = getSymbolLength(parsedInput, parsedInput.sequence().get(endIndex));
+
+        // Case where start & end are within the same symbol
+        if (startIndex == endIndex) {
+            int symbol = parsedInput.sequence().get(startIndex);
+            // If excerpt aligns exactly with symbol boundaries, take whole symbol
+            if (totalTraversedBeforeStart == start && totalTraversedBeforeEnd + endSymbolLength == end) {
+                excerptSequence.add(symbol);
+                copyRule(symbol, parsedInput, excerptRules);
+            } else {
+                // Part of the excerpt lies in the symbol, recurse into it
+                processExcerptSymbol(symbol, parsedInput, excerptRules, excerptSequence, start - totalTraversedBeforeStart, end - totalTraversedBeforeStart);
             }
+            return new Parser.ParsedGrammar(excerptRules, excerptSequence);
+        }
+
+        // Iterate through the start symbol
+        int startSymbol = parsedInput.sequence().get(startIndex);
+
+        if (totalTraversedBeforeStart == start) {
+            // Excerpt starts exactly at the boundary, take whole symbol
+            excerptSequence.add(startSymbol);
+            copyRule(startSymbol, parsedInput, excerptRules);
+        }
+        else {
+            // A part of the excerpt lies in the Symbol.
+            //In this case take the relative start position, and get all the rules from this position to the length of the rule
+            processStart(startSymbol, parsedInput, excerptRules, excerptSequence, start - totalTraversedBeforeStart, getSymbolLength(parsedInput, startSymbol));
+        }
+
+        // Add all symbols that lie entirely within the excerpt
+        // It will simply not get executed, if there are no characters in between
+        for (int i = startIndex + 1; i < endIndex; i++) {
+            int symbol = parsedInput.sequence().get(i);
+            excerptSequence.add(symbol);
+            copyRule(symbol, parsedInput, excerptRules);
+        }
+
+        // Iterate through the end symbol
+        int endSymbol = parsedInput.sequence().get(endIndex);
+
+        if (totalTraversedBeforeEnd + endSymbolLength == end) {
+            // Excerpt ends exactly after this symbol, take whole symbol
+            excerptSequence.add(endSymbol);
+            copyRule(endSymbol, parsedInput, excerptRules);
+        } else {
+            // Partial overlap, recurse into symbol
+            processEnd(endSymbol, parsedInput, excerptRules, excerptSequence, end - totalTraversedBeforeEnd);
+        }
+
+        return new Parser.ParsedGrammar(excerptRules, excerptSequence);
+    }
+
+    // Recursively processes the start symbol if excerpt starts inside it
+    private static void processStart(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules, List<Integer> excerptSequence, int from, int to) {
+        if (symbol < 256) {
+            excerptSequence.add(symbol);
             return;
         }
-    //If it is a non-terminal, get its child rules (lhs and rhs are in this case a tuple)
-        Parser.GrammarRule<Integer, Integer> ruleData = parsedInput.grammarRules().get(symbol);
 
-        if (ruleData == null) {
-            throw new IllegalArgumentException("Rule for symbol " + symbol + " not found in the parsed grammar.");
-        }
-        //Determine the length of the left child.
-        //If it is a terminal 1,otherwise get the length from the Grammar Rules
-        int leftSize = (ruleData.lhs < 256) ? 1 : parsedInput.grammarRules().get(ruleData.lhs).length;
-        //Navigate to the left child node recursively. If the part we search falls under it, then change the parameters accordingly.
-        if (startOffset < leftSize) {
-            processExcerpt(ruleData.lhs, parsedInput, excerptRules, excerptSeq, startOffset, Math.min(endOffset, leftSize));
-        }
-        // Excerpt falls into the rhs node. So we can navigate to the right child and change the parameters accordingly. If the startOffset-left size delivers a negative value that means the excerpt starts before the right child.In which case we can just take 0 which is the beginning of the right child.
-        if (endOffset > leftSize) {
-            processExcerpt(ruleData.rhs, parsedInput, excerptRules, excerptSeq, Math.max(0, startOffset - leftSize), endOffset - leftSize);
+        Parser.GrammarRule<Integer, Integer> rule = parsedInput.grammarRules().get(symbol);
+        int leftSize = getSymbolLength(parsedInput, rule.lhs);
+
+        if (from < leftSize) {
+            processStart(rule.lhs, parsedInput, excerptRules, excerptSequence, from, Math.min(to, leftSize));
+            if (to > leftSize) {
+                excerptSequence.add(rule.rhs);
+                copyRule(rule.rhs, parsedInput, excerptRules);
+            }
+        } else {
+            processStart(rule.rhs, parsedInput, excerptRules, excerptSequence, from - leftSize, to - leftSize);
         }
 
-        excerptRules.put(symbol, ruleData);
+        copyRule(symbol, parsedInput, excerptRules);
     }
 
-    // This is purely me translating the result into a "human-readable" format. The idea is to have an intermediate modular file which can be loaded into other programs. It should also help with debugging
+    // Recursively process the end symbol by going through it
+    private static void processEnd(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules, List<Integer> excerptSequence, int to) {
+        if (symbol < 256) {
+            excerptSequence.add(symbol);
+            return;
+        }
+
+        Parser.GrammarRule<Integer, Integer> rule = parsedInput.grammarRules().get(symbol);
+        int leftSize = getSymbolLength(parsedInput, rule.lhs);
+
+        if (to < leftSize) {
+            processEnd(rule.lhs, parsedInput, excerptRules, excerptSequence, to);
+        } else if (to == leftSize) {
+            excerptSequence.add(rule.lhs);
+            copyRule(rule.lhs, parsedInput, excerptRules);
+        } else {
+            excerptSequence.add(rule.lhs);
+            copyRule(rule.lhs, parsedInput, excerptRules);
+            processEnd(rule.rhs, parsedInput, excerptRules, excerptSequence, to - leftSize);
+        }
+
+        copyRule(symbol, parsedInput, excerptRules);
+    }
+
+    // For the edge case in which the whole excerpt lies inside one symbol
+    //TODO: Make sure this works correctly
+    private static void processExcerptSymbol(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules, List<Integer> excerptSeq, int from, int to) {
+        if (symbol < 256) {
+                excerptSeq.add(symbol);
+            return;
+        }
+
+        Parser.GrammarRule<Integer, Integer> rule = parsedInput.grammarRules().get(symbol);
+        int leftSize = getSymbolLength(parsedInput, rule.lhs);
+
+        if (from < leftSize) {
+            processExcerptSymbol(rule.lhs, parsedInput, excerptRules, excerptSeq, from, Math.min(to, leftSize));
+        }
+        if (to > leftSize) {
+            processExcerptSymbol(rule.rhs, parsedInput, excerptRules, excerptSeq, from - leftSize, to - leftSize);
+        }
+
+        copyRule(symbol, parsedInput, excerptRules);
+    }
+
+    // Adds a rule to the excerpt grammar if not already present
+    // TODO: count the occurrences of the rules for the recompression.
+    private static void copyRule(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules) {
+        if (symbol >= 256 && !excerptRules.containsKey(symbol)) {
+            excerptRules.put(symbol, parsedInput.grammarRules().get(symbol));
+        }
+    }
+
+    //TODO: Implement this or bake it into copy rules. I don't know which one would be more performant
+    private static void addMissingRules(){
+
+    }
+
+    // Returns the length of a symbol. Since my grammar structure only calculates the length for non-terminals. We have to set the length for terminals manually
+    private static int getSymbolLength(Parser.ParsedGrammar parsedInput, int symbol) {
+        return (symbol < 256) ? 1 : parsedInput.grammarRules().get(symbol).length;
+    }
+
+    // Computes the total uncompressed length of the sequence
+    public static int getUncompressedSize(Parser.ParsedGrammar parsedInput) {
+        int total = 0;
+        for (int symbol : parsedInput.sequence()) {
+            total += getSymbolLength(parsedInput, symbol);
+        }
+        return total;
+    }
+
+    // This is a modular approach for saving and loading the grammars. It makes it easier for me to debug later on.
     public static void writeGrammarToFile(Parser.ParsedGrammar grammarData, String outputFile) throws IOException {
         try (BufferedWriter fileWriter = new BufferedWriter(new FileWriter(outputFile))) {
-
             for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> ruleEntry : grammarData.grammarRules().entrySet()) {
                 int ruleNum = ruleEntry.getKey();
                 Parser.GrammarRule<Integer, Integer> ruleData = ruleEntry.getValue();
