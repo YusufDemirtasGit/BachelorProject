@@ -2,8 +2,11 @@ package grammarextractor;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Scanner;
+import java.util.*;
 import java.io.*;
+
+import static grammarextractor.Parser.printGrammar;
+import static grammarextractor.Recompressor.*;
 
 public class Main {
     public static void main(String[] args) throws IOException, InterruptedException {
@@ -18,6 +21,8 @@ public class Main {
             System.out.println("6. Extract Excerpt(Not Yet fully implemented)");
             System.out.println("7. Create human readable format");
             System.out.println("8. Decompress Human readable format back into string");
+            System.out.println("9. PopInlet Roundtrip");
+            System.out.println("10. PopOutlet Roundtrip");
             System.out.println("99. Exit");
 
             System.out.print("Enter your choice: ");
@@ -185,6 +190,120 @@ public class Main {
                         throw new FileNotFoundException();
                     }
                     break;
+                case 9:
+                    try {
+                        System.out.println("\nEnter the path to the human-readable grammar file:");
+                        String filename = scanner.nextLine().trim();
+                        Path path = Paths.get(filename);
+                        Parser.ParsedGrammar grammarInlet = Parser.parseFile(path);
+
+                        System.out.println("\nBefore PopInlet:");
+                        printGrammar(grammarInlet);
+
+                        // Decompress before PopInlet
+                        String beforeDecompressed = Decompressor.decompress(grammarInlet);
+
+                        // Perform PopInlet
+                        Map<Integer, Map<Integer, Integer>> usageMatrix = Recompressor.buildUsageMatrix(grammarInlet.grammarRules());
+                        Map<Integer, Set<Integer>> reverseUsageMap = Recompressor.buildReverseUsageMap(usageMatrix);
+                        Recompressor.popInlet(grammarInlet.grammarRules(), reverseUsageMap);
+
+                        System.out.println("\nAfter PopInlet:");
+                        printGrammar(grammarInlet);
+
+                        // Decompress after PopInlet
+                        String afterDecompressed = Decompressor.decompress(grammarInlet);
+
+                        // Compare decompressed results
+                        System.out.println("\n\nDecompressed results before pop inlet:");
+                        System.out.println(beforeDecompressed);
+                        System.out.println("\n\nDecompressed results after pop inlet:");
+                        System.out.println(afterDecompressed);
+                        if (beforeDecompressed.equals(afterDecompressed)) {
+                            System.out.println("\n✅ Sequences are identical after PopInlet.");
+                        } else {
+                            System.out.println("\n❌ Sequences differ after PopInlet.");
+                        }
+
+                    } catch (Exception e) {
+                        System.err.println("\nAn error occurred during PopInlet test: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                case 10:
+                    try {
+                        System.out.println("\nEnter the path to the human-readable grammar file:");
+                        String filename = scanner.nextLine().trim();
+                        Path path = Paths.get(filename);
+                        Parser.ParsedGrammar grammarOutlet = Parser.parseFile(path);
+
+                        System.out.println("\nBefore PopOutlet:");
+                        printGrammar(grammarOutlet);
+                        // Decompress before PopInlet
+                        String beforeDecompressed2 = Decompressor.decompress(grammarOutlet);
+
+                        Map<Integer, Map<Integer, Integer>> usageMatrix = Recompressor.buildUsageMatrix(grammarOutlet.grammarRules());
+                        Map<Integer, Set<Integer>> reverseUsageMap = Recompressor.buildReverseUsageMap(usageMatrix);
+
+                        Recompressor.popOutlet(grammarOutlet.grammarRules(), reverseUsageMap);
+
+                        System.out.println("\nAfter PopOutlet:");
+                        printGrammar(grammarOutlet);
+                        // Decompress after PopInlet
+                        String afterDecompressed2 = Decompressor.decompress(grammarOutlet);
+
+                        // Compare decompressed results
+                        System.out.println("\n\nDecompressed results before pop outlet:");
+                        System.out.println(beforeDecompressed2);
+                        System.out.println("\n\nDecompressed results after pop outlet:");
+                        System.out.println(afterDecompressed2);
+                        if (beforeDecompressed2.equals(afterDecompressed2)) {
+                            System.out.println("\n✅ Sequences are identical after PopOutlet.");
+                        } else {
+                            System.out.println("\n❌ Sequences differ after PopOutlet.");
+                        }
+
+                    } catch (Exception e) {
+                        System.err.println("\nAn error occurred during PopOutlet test: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                    break;
+                case 11:
+                    // Step 1: Load the full grammar from file
+                    Path inputPath = Path.of("input_grammar.txt"); // replace with actual path
+                    Parser.ParsedGrammar fullGrammar = Parser.parseFile(inputPath);
+
+                    // Step 2: Extract a subgrammar (change range as needed)
+                    int start = 2;
+                    int end = 8;
+                    Parser.ParsedGrammar excerpt_rec = Extractor.extractExcerpt(fullGrammar, start, end);
+
+                    System.out.println("\n== Extracted Grammar ==");
+                    Extractor.writeGrammarToFile(excerpt_rec, "excerpt_before_recompression.txt");
+                    System.out.println("Excerpt written to: excerpt_before_recompression.txt");
+
+                    // Step 3: Decompress before recompression for validation
+                    String beforeRecompression = Decompressor.decompress(excerpt_rec);
+                    System.out.println("\nDecompressed before recompression:\n" + beforeRecompression);
+
+                    // Step 4: Recompress
+                    Recompressor.recompress(excerpt_rec);
+
+                    // Step 5: Decompress again for validation
+                    String afterRecompression = Decompressor.decompress(excerpt_rec);
+                    System.out.println("\nDecompressed after recompression:\n" + afterRecompression);
+
+                    // Step 6: Output new grammar
+                    Extractor.writeGrammarToFile(excerpt_rec, "excerpt_after_recompression.txt");
+                    System.out.println("Recompressed grammar written to: excerpt_after_recompression.txt");
+
+                    // Step 7: Check correctness
+                    if (beforeRecompression.equals(afterRecompression)) {
+                        System.out.println("\n✅ Roundtrip decompression successful. No data loss.");
+                    } else {
+                        System.out.println("\n❌ Roundtrip decompression mismatch detected.");
+                    }
+
+
 
                 case 99:
                     System.exit(0);
