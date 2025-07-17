@@ -48,37 +48,38 @@ public class Extractor {
             int symbol = parsedInput.sequence().get(startIndex);
             if (totalTraversedBeforeStart == start && totalTraversedBeforeEnd + endSymbolLength == end) {
                 excerptSequence.add(symbol);
-                copyRule(symbol, parsedInput, excerptRules);
             } else {
                 processExcerptSymbol(symbol, parsedInput, excerptRules, excerptSequence, start - totalTraversedBeforeStart, end - totalTraversedBeforeStart);
             }
-            return new Parser.ParsedGrammar(excerptRules, excerptSequence);
-        }
-
-        // Process start symbol
-        int startSymbol = parsedInput.sequence().get(startIndex);
-        if (totalTraversedBeforeStart == start) {
-            excerptSequence.add(startSymbol);
-            copyRule(startSymbol, parsedInput, excerptRules);
         } else {
-            processStart(startSymbol, parsedInput, excerptRules, excerptSequence, start - totalTraversedBeforeStart, getSymbolLength(parsedInput, startSymbol));
+            // Process start symbol
+            int startSymbol = parsedInput.sequence().get(startIndex);
+            if (totalTraversedBeforeStart == start) {
+                excerptSequence.add(startSymbol);
+            } else {
+                processStart(startSymbol, parsedInput, excerptRules, excerptSequence, start - totalTraversedBeforeStart, getSymbolLength(parsedInput, startSymbol));
+            }
+
+            // Add all fully included symbols in between
+            for (int i = startIndex + 1; i < endIndex; i++) {
+                int symbol = parsedInput.sequence().get(i);
+                excerptSequence.add(symbol);
+            }
+
+            // Process end symbol
+            int endSymbol = parsedInput.sequence().get(endIndex);
+            if (totalTraversedBeforeEnd + endSymbolLength == end) {
+                excerptSequence.add(endSymbol);
+            } else {
+                processEnd(endSymbol, parsedInput, excerptRules, excerptSequence, end - totalTraversedBeforeEnd);
+            }
         }
 
-        // Add all fully included symbols in between
-        for (int i = startIndex + 1; i < endIndex; i++) {
-            int symbol = parsedInput.sequence().get(i);
-            excerptSequence.add(symbol);
-            copyRule(symbol, parsedInput, excerptRules);
-        }
+        // Compute the usage graph once from the full grammar
+        Map<Integer, Set<Integer>> usageGraph = buildUsageGraph(parsedInput.grammarRules());
 
-        // Process end symbol
-        int endSymbol = parsedInput.sequence().get(endIndex);
-        if (totalTraversedBeforeEnd + endSymbolLength == end) {
-            excerptSequence.add(endSymbol);
-            copyRule(endSymbol, parsedInput, excerptRules);
-        } else {
-            processEnd(endSymbol, parsedInput, excerptRules, excerptSequence, end - totalTraversedBeforeEnd);
-        }
+        // Copy all reachable rules for the sequence
+        copyReachableRules(excerptSequence, parsedInput.grammarRules(), excerptRules, usageGraph);
 
         return new Parser.ParsedGrammar(excerptRules, excerptSequence);
     }
@@ -97,13 +98,10 @@ public class Extractor {
             processStart(rule.rhs.get(0), parsedInput, excerptRules, excerptSequence, from, Math.min(to, leftSize));
             if (to > leftSize) {
                 excerptSequence.add(rule.rhs.get(1));
-                copyRule(rule.rhs.get(1), parsedInput, excerptRules);
             }
         } else {
             processStart(rule.rhs.get(1), parsedInput, excerptRules, excerptSequence, from - leftSize, to - leftSize);
         }
-
-        copyRule(symbol, parsedInput, excerptRules);
     }
 
     private static void processEnd(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules,
@@ -120,14 +118,10 @@ public class Extractor {
             processEnd(rule.rhs.get(0), parsedInput, excerptRules, excerptSequence, to);
         } else if (to == leftSize) {
             excerptSequence.add(rule.rhs.get(0));
-            copyRule(rule.rhs.get(0), parsedInput, excerptRules);
         } else {
             excerptSequence.add(rule.rhs.get(0));
-            copyRule(rule.rhs.get(0), parsedInput, excerptRules);
             processEnd(rule.rhs.get(1), parsedInput, excerptRules, excerptSequence, to - leftSize);
         }
-
-        copyRule(symbol, parsedInput, excerptRules);
     }
 
     private static void processExcerptSymbol(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules,
@@ -146,31 +140,46 @@ public class Extractor {
         if (to > leftSize) {
             processExcerptSymbol(rule.rhs.get(1), parsedInput, excerptRules, excerptSeq, from - leftSize, to - leftSize);
         }
-
-        copyRule(symbol, parsedInput, excerptRules);
     }
 
-    private static void copyRule(int symbol, Parser.ParsedGrammar parsedInput, Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules) {
-        if (symbol >= 256 && !excerptRules.containsKey(symbol)) {
-            excerptRules.put(symbol, parsedInput.grammarRules().get(symbol));
-        }
-    }
-
-    public static Map<Integer, Map<Integer, Integer>> buildUsageMatrix(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
-        Map<Integer, Map<Integer, Integer>> matrix = new HashMap<>();
+    public static Map<Integer, Set<Integer>> buildUsageGraph(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
+        Map<Integer, Set<Integer>> graph = new HashMap<>();
         for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : rules.entrySet()) {
-            int x = entry.getKey();
-            Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
-
-            Map<Integer, Integer> used = new HashMap<>();
-            for (int rhsSymbol : rule.rhs) {
-                if (rhsSymbol >= 256 && rules.containsKey(rhsSymbol)) {
-                    used.put(rhsSymbol, 1);
+            int from = entry.getKey();
+            Set<Integer> deps = new HashSet<>();
+            for (int symbol : entry.getValue().rhs) {
+                if (symbol >= 256) {
+                    deps.add(symbol);
                 }
             }
-            matrix.put(x, used);
+            graph.put(from, deps);
         }
-        return matrix;
+        return graph;
+    }
+
+    private static void copyReachableRules(List<Integer> sequence,
+                                           Map<Integer, Parser.GrammarRule<Integer, Integer>> allRules,
+                                           Map<Integer, Parser.GrammarRule<Integer, Integer>> excerptRules,
+                                           Map<Integer, Set<Integer>> usageGraph) {
+        Set<Integer> visited = new HashSet<>();
+        Deque<Integer> stack = new ArrayDeque<>(sequence);
+
+        while (!stack.isEmpty()) {
+            int current = stack.pop();
+            if (current < 256 || visited.contains(current)) continue;
+
+            Parser.GrammarRule<Integer, Integer> rule = allRules.get(current);
+            if (rule != null) {
+                excerptRules.put(current, rule);
+                visited.add(current);
+
+                for (int dep : usageGraph.getOrDefault(current, Set.of())) {
+                    if (!visited.contains(dep)) {
+                        stack.push(dep);
+                    }
+                }
+            }
+        }
     }
 
     private static int getSymbolLength(Parser.ParsedGrammar parsedInput, int symbol) {

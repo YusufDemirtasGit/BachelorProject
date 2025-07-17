@@ -2,8 +2,6 @@ package grammarextractor;
 
 import java.util.*;
 
-import static grammarextractor.Parser.ParsedGrammar.getLength;
-
 public class Recompressor {
 
     public static void recompress(Parser.ParsedGrammar grammar) {
@@ -14,18 +12,74 @@ public class Recompressor {
         do {
             Map<Integer, Map<Integer, Integer>> usageMatrix = buildUsageMatrix(rules);
             Map<Integer, Set<Integer>> reverseUsageMap = buildReverseUsageMap(usageMatrix);
-            Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(rules, reverseUsageMap);
 
             popInlet(rules, reverseUsageMap);
 
+            RuleMetadata.recomputeLengths(rules);
+            Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(rules, reverseUsageMap);
+
             Map<Pair<Integer, Integer>, Integer> bigramFreqs = computeBigramFrequencies(rules, sequence, metadata);
             changed = applyBigramReplacement(grammar, rules, sequence, bigramFreqs);
+
+            RuleMetadata.recomputeLengths(rules);
+
         } while (changed);
+
+        pruneUnusedRules(grammar.grammarRules(), grammar.sequence());
+    }
+
+    public static void pruneUnusedRules(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules, List<Integer> sequence) {
+        Set<Integer> reachable = new HashSet<>();
+        for (int symbol : sequence) {
+            dfs(symbol, rules, reachable);
+        }
+        rules.keySet().removeIf(ruleId -> !reachable.contains(ruleId));
+    }
+
+    private static void dfs(int symbol, Map<Integer, Parser.GrammarRule<Integer, Integer>> rules, Set<Integer> visited) {
+        if (symbol < 256 || visited.contains(symbol)) return;
+        visited.add(symbol);
+        Parser.GrammarRule<Integer, Integer> rule = rules.get(symbol);
+        if (rule != null) {
+            for (int rhsSym : rule.rhs) {
+                dfs(rhsSym, rules, visited);
+            }
+        }
+    }
+
+    public static Map<Integer, Map<Integer, Integer>> buildUsageMatrix(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
+        Map<Integer, Map<Integer, Integer>> usageMatrix = new HashMap<>();
+        for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : rules.entrySet()) {
+            int userRule = entry.getKey();
+            Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
+            Map<Integer, Integer> usage = new HashMap<>();
+            for (int sym : rule.rhs) {
+                if (sym >= 256) {
+                    usage.put(sym, usage.getOrDefault(sym, 0) + 1);
+                }
+            }
+            usageMatrix.put(userRule, usage);
+            System.out.println("UsageMatrix Entry: R" + userRule + " uses: " + usage);
+        }
+        return usageMatrix;
+    }
+
+    public static Map<Integer, Set<Integer>> buildReverseUsageMap(Map<Integer, Map<Integer, Integer>> usageMatrix) {
+        Map<Integer, Set<Integer>> reverseMap = new HashMap<>();
+        for (Map.Entry<Integer, Map<Integer, Integer>> userEntry : usageMatrix.entrySet()) {
+            int user = userEntry.getKey();
+            for (int used : userEntry.getValue().keySet()) {
+                reverseMap.computeIfAbsent(used, k -> new HashSet<>()).add(user);
+            }
+        }
+        System.out.println("Reverse usage map constructed: " + reverseMap);
+        return reverseMap;
     }
 
     public static void popInlet(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules,
                                 Map<Integer, Set<Integer>> reverseUsageMap) {
-        System.out.println("\n========== Starting PopInlet Pass ==========");
+        boolean verbose = true;
+        if (verbose) System.out.println("\n========== Starting PopInlet Pass ==========");
 
         int nextRuleId = Collections.max(rules.keySet()) + 1;
         List<Integer> ruleIds = new ArrayList<>(rules.keySet());
@@ -36,12 +90,14 @@ public class Recompressor {
 
             Set<Integer> parents = reverseUsageMap.getOrDefault(targetId, Set.of());
             if (parents.isEmpty()) {
-                System.out.println("? Rule R" + targetId + " is not used by any other rule. Skipping.");
+                if (verbose) System.out.println("⏭ Rule R" + targetId + " is unused. Skipping.");
                 continue;
             }
 
-            System.out.println("\n? Checking target rule: R" + targetId);
-            System.out.println("  ? Used by rules: " + parents);
+            if (verbose) {
+                System.out.println("\n? Checking target rule: R" + targetId);
+                System.out.println("  ? Used by rules: " + parents);
+            }
 
             Integer inletCandidate = null;
             boolean valid = true;
@@ -51,134 +107,139 @@ public class Recompressor {
                 if (parent == null) continue;
 
                 List<Integer> rhs = parent.rhs;
-                if (!rhs.isEmpty() && rhs.get(rhs.size() - 1).equals(targetId)) {
+                if (rhs.size() >= 2 && rhs.get(rhs.size() - 1).equals(targetId)) {
                     int preceding = rhs.get(rhs.size() - 2);
                     if (inletCandidate == null) {
                         inletCandidate = preceding;
                     } else if (!inletCandidate.equals(preceding)) {
-                        System.out.println("  ✘ Inconsistent inlet: " + preceding + " ≠ " + inletCandidate);
+                        if (verbose) System.out.println("  ✘ Inconsistent inlet: " + preceding + " ≠ " + inletCandidate);
                         valid = false;
                         break;
                     }
                 } else {
-                    System.out.println("  ✘ Rule R" + parentId + " does not use R" + targetId + " at RHS end.");
+                    if (verbose) System.out.println("  ✘ Rule R" + parentId + " does not end with R" + targetId);
                     valid = false;
                     break;
                 }
             }
 
             if (!valid || inletCandidate == null) {
-                System.out.println("  ✘ No unique inlet found. Skipping R" + targetId);
+                if (verbose) System.out.println("  ✘ No unique inlet found. Skipping R" + targetId);
                 continue;
             }
 
-            System.out.println("  ? Inlet confirmed: " + inletCandidate + " ? performing pop into R" + targetId);
-
-            // Create new rule: inletCandidate + original RHS of targetRule
             List<Integer> newRHS = new ArrayList<>();
             newRHS.add(inletCandidate);
             newRHS.addAll(targetRule.rhs);
-            int newLen = Parser.ParsedGrammar.getLength(rules, inletCandidate) + targetRule.length;
 
-            Parser.GrammarRule<Integer, Integer> newRule = new Parser.GrammarRule<>(targetRule.lhs, newRHS, newLen);
             int newRuleId = nextRuleId++;
-            rules.put(newRuleId, newRule);
-            System.out.println("    ? Created new rule R" + newRuleId + ": " + newRule.rhs);
+            int newLen = computeLength(newRHS, rules);
 
-            // Update parents to use the new rule instead of (inletCandidate,targetRule)
+            Parser.GrammarRule<Integer, Integer> newRule = new Parser.GrammarRule<>(newRuleId, newRHS, newLen);
+            rules.put(newRuleId, newRule);
+
+            if (verbose) System.out.println("  ✅ Created R" + newRuleId + ": " + newRHS);
+
             for (int parentId : parents) {
                 Parser.GrammarRule<Integer, Integer> parent = rules.get(parentId);
                 if (parent == null) continue;
 
-                List<Integer> newParentRHS = new ArrayList<>(parent.rhs);
-                int size = newParentRHS.size();
-                if (size >= 2 && newParentRHS.get(size - 2).equals(inletCandidate) && newParentRHS.get(size - 1).equals(targetId)) {
-                    newParentRHS.remove(size - 1); // remove targetId
-                    newParentRHS.remove(size - 2); // remove inletCandidate
-                    newParentRHS.add(newRuleId);   // replace with new rule
+                List<Integer> rhs = parent.rhs;
+                if (rhs.size() >= 2 &&
+                        rhs.get(rhs.size() - 2).equals(inletCandidate) &&
+                        rhs.get(rhs.size() - 1).equals(targetId)) {
 
-                    int newParentLength = 0;
-                    for (int sym : newParentRHS) {
-                        newParentLength += Parser.ParsedGrammar.getLength(rules, sym);
-                    }
+                    List<Integer> updatedRHS = new ArrayList<>(rhs.subList(0, rhs.size() - 2));
+                    updatedRHS.add(newRuleId);
 
-                    rules.put(parentId, new Parser.GrammarRule<>(parent.lhs, newParentRHS, newParentLength));
-                    System.out.println("    ? Updated R" + parentId + " to: " + newParentRHS);
+                    int newParentLen = computeLength(updatedRHS, rules);
+                    rules.put(parentId, new Parser.GrammarRule<>(parentId, updatedRHS, newParentLen));
+
+                    if (verbose) System.out.println("    ↪ Updated R" + parentId + ": " + updatedRHS);
                 }
             }
 
             rules.remove(targetId);
-            System.out.println("    ? Removed old rule R" + targetId);
+            if (verbose) System.out.println("    ❌ Removed R" + targetId);
         }
 
-        System.out.println("\n========== PopInlet Pass Complete ==========");
+        if (verbose) System.out.println("========== PopInlet Pass Complete ==========\n");
     }
-
-
     public static void popOutlet(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules,
                                  Map<Integer, Set<Integer>> reverseUsageMap) {
-        System.out.println("\n========== Starting PopOutlet Pass ==========");
+        boolean verbose = true; // Set to true to enable detailed debug logging
+
+        if (verbose) System.out.println("\n========== Starting PopOutlet Pass ==========");
 
         boolean changed = false;
-        int maxRuleId = rules.keySet().stream().max(Integer::compare).orElse(255);
 
         for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : rules.entrySet()) {
             int ruleId = entry.getKey();
             Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
+            List<Integer> rhs = rule.rhs;
 
-            if (rule.rhs.isEmpty()) continue;
-            int firstSymbol = rule.rhs.get(0);
+            if (rhs.isEmpty()) continue;
 
-            // Try to outlet from the first symbol (if nonterminal and has only one user)
-            if (firstSymbol >= 256 && reverseUsageMap.getOrDefault(firstSymbol, Set.of()).size() == 1) {
-                Parser.GrammarRule<Integer, Integer> pulledRule = rules.get(firstSymbol);
-                if (pulledRule == null) continue;
+            // -------- Attempt Pop from Front --------
+            int first = rhs.getFirst();
+            if (first >= 256 && reverseUsageMap.getOrDefault(first, Set.of()).size() == 1) {
+                Parser.GrammarRule<Integer, Integer> pulled = rules.get(first);
+                if (pulled != null) {
+                    List<Integer> newRHS = new ArrayList<>(pulled.rhs);
+                    newRHS.addAll(rhs.subList(1, rhs.size()));
 
-                List<Integer> newRhs = new ArrayList<>(pulledRule.rhs);
-                newRhs.addAll(rule.rhs.subList(1, rule.rhs.size()));
+                    rule.rhs = newRHS;
+                    rule.length = computeLength(newRHS, rules);
+                    changed = true;
 
-                rule.rhs = newRhs;
-                rule.length = pulledRule.length + getLength(rule.rhs.subList(1, rule.rhs.size()), rules);
-
-                changed = true;
-                System.out.printf("? PopOutlet on R%d: pulled %d from front%n", ruleId, firstSymbol);
+                    if (verbose)
+                        System.out.printf("? PopOutlet on R%d: pulled R%d from front → %s%n", ruleId, first, newRHS);
+                }
             }
 
-            // Try to outlet from the last symbol (if nonterminal and has only one user)
-            if (!rule.rhs.isEmpty()) {
-                int lastIdx = rule.rhs.size() - 1;
-                int lastSymbol = rule.rhs.get(lastIdx);
+            // -------- Attempt Pop from Back --------
+            int lastIdx = rhs.size() - 1;
+            int last = rhs.get(lastIdx);
+            if (last >= 256 && reverseUsageMap.getOrDefault(last, Set.of()).size() == 1) {
+                Parser.GrammarRule<Integer, Integer> pulled = rules.get(last);
+                if (pulled != null) {
+                    List<Integer> newRHS = new ArrayList<>(rhs.subList(0, lastIdx));
+                    newRHS.addAll(pulled.rhs);
 
-                if (lastSymbol >= 256 && reverseUsageMap.getOrDefault(lastSymbol, Set.of()).size() == 1) {
-                    Parser.GrammarRule<Integer, Integer> pulledRule = rules.get(lastSymbol);
-                    if (pulledRule == null) continue;
-
-                    List<Integer> newRhs = new ArrayList<>(rule.rhs.subList(0, lastIdx));
-                    newRhs.addAll(pulledRule.rhs);
-
-                    rule.rhs = newRhs;
-                    rule.length = getLength(rule.rhs, rules);
-
+                    rule.rhs = newRHS;
+                    rule.length = computeLength(newRHS, rules);
                     changed = true;
-                    System.out.printf("? PopOutlet on R%d: pulled %d from back%n", ruleId, lastSymbol);
+
+                    if (verbose)
+                        System.out.printf("? PopOutlet on R%d: pulled R%d from back → %s%n", ruleId, last, newRHS);
                 }
             }
         }
 
-        if (!changed) {
+        if (!changed && verbose) {
             System.out.println("? No PopOutlet rules applied.");
         }
 
-        System.out.println("========== PopOutlet Pass Complete ==========");
+        if (verbose) System.out.println("========== PopOutlet Pass Complete ==========\n");
     }
-    private static int getLength(List<Integer> rhs, Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
+
+    private static int computeLength(List<Integer> rhs, Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
         int total = 0;
         for (int symbol : rhs) {
-            total += (symbol < 256) ? 1 : rules.get(symbol).length;
+            if (symbol < 256) {
+                total++;
+            } else {
+                Parser.GrammarRule<Integer, Integer> rule = rules.get(symbol);
+                if (rule != null) {
+                    total += rule.length;
+                } else {
+                    System.err.println("Tried to get length of undefined rule R" + symbol);
+                    total++;
+                }
+            }
         }
         return total;
     }
-
 
     private static boolean applyBigramReplacement(
             Parser.ParsedGrammar grammar,
@@ -214,7 +275,7 @@ public class Recompressor {
             }
             if (!newRHS.equals(rule.rhs)) {
                 rule.rhs = newRHS;
-                rule.length = newRHS.stream().mapToInt(sym -> Parser.ParsedGrammar.getLength(rules, sym)).sum();
+                rule.length = computeLength(newRHS, rules);
             }
         }
 
@@ -254,7 +315,7 @@ public class Recompressor {
             int ruleId = entry.getKey();
             Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
             RuleMetadata meta = metadataMap.get(ruleId);
-            if (rule.rhs.size() < 2) continue;
+            if (rule.rhs.size() < 2 || meta == null) continue;
 
             for (int i = 0; i < rule.rhs.size() - 1; i++) {
                 int x = rule.rhs.get(i);
@@ -264,39 +325,5 @@ public class Recompressor {
         }
 
         return freqs;
-    }
-
-    public static Map<Integer, Map<Integer, Integer>> buildUsageMatrix(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
-        Map<Integer, Map<Integer, Integer>> usageMatrix = new HashMap<>();
-
-        for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : rules.entrySet()) {
-            int userRule = entry.getKey();
-            Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
-
-            Map<Integer, Integer> usage = new HashMap<>();
-            for (int sym : rule.rhs) {
-                if (sym >= 256) {
-                    usage.put(sym, usage.getOrDefault(sym, 0) + 1);
-                }
-            }
-
-            usageMatrix.put(userRule, usage);
-            System.out.println("UsageMatrix Entry: R" + userRule + " uses: " + usage);
-        }
-
-        return usageMatrix;
-    }
-
-    public static Map<Integer, Set<Integer>> buildReverseUsageMap(Map<Integer, Map<Integer, Integer>> usageMatrix) {
-        Map<Integer, Set<Integer>> reverseMap = new HashMap<>();
-
-        for (Map.Entry<Integer, Map<Integer, Integer>> userEntry : usageMatrix.entrySet()) {
-            int user = userEntry.getKey();
-            for (int used : userEntry.getValue().keySet()) {
-                reverseMap.computeIfAbsent(used, k -> new HashSet<>()).add(user);
-            }
-        }
-        System.out.println("Reverse usage map constructed: " + reverseMap);
-        return reverseMap;
     }
 }

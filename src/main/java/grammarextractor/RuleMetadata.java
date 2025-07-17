@@ -1,45 +1,56 @@
 package grammarextractor;
 
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class RuleMetadata {
-
     public int vocc;
-    public int first;
-    public int last;
 
-    public RuleMetadata() {
-        this.vocc = 1;
-        this.first = -1;
-        this.last = -1;
+    public RuleMetadata(int vocc) {
+        this.vocc = vocc;
     }
 
-    public static Map<Integer, RuleMetadata> computeAll(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules,
-                                                        Map<Integer, Set<Integer>> reverseUsageMap) {
-        Map<Integer, RuleMetadata> result = new HashMap<>();
+    public static Map<Integer, RuleMetadata> computeAll(
+            Map<Integer, Parser.GrammarRule<Integer, Integer>> rules,
+            Map<Integer, Set<Integer>> reverseUsageMap) {
 
+        return rules.entrySet().stream().collect(
+                java.util.stream.Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> {
+                            int vocc = reverseUsageMap.getOrDefault(entry.getKey(), Set.of()).size();
+                            return new RuleMetadata(vocc);
+                        }
+                )
+        );
+    }
+
+    // ✅ Utility to recompute rule lengths
+    public static void recomputeLengths(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
         for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : rules.entrySet()) {
-            int ruleId = entry.getKey();
             Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
-
-            RuleMetadata metadata = new RuleMetadata();
-
-            // Find first symbol by scanning from left to right
-            metadata.first = getFirstSymbol(rule.rhs, rules);
-            // Find last symbol by scanning from right to left
-            metadata.last = getLastSymbol(rule.rhs, rules);
-
-            // Compute usage count
-            metadata.vocc = reverseUsageMap.getOrDefault(ruleId, Collections.emptySet()).size();
-            if (metadata.vocc == 0) metadata.vocc = 1;
-
-            result.put(ruleId, metadata);
+            int length = 0;
+            for (int sym : rule.rhs) {
+                if (sym < 256) {
+                    length += 1;
+                } else {
+                    Parser.GrammarRule<Integer, Integer> sub = rules.get(sym);
+                    if (sub == null) {
+                        System.err.println("Warning: Missing rule R" + sym + " while recomputing length of R" + entry.getKey());
+                        length += 1;
+                    } else {
+                        length += sub.length;
+                    }
+                }
+            }
+            rule.length = length;
         }
-
-        return result;
     }
 
-    private static int getFirstSymbol(List<Integer> rhs, Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
+
+
+private static int getFirstSymbol(List<Integer> rhs, Map<Integer, Parser.GrammarRule<Integer, Integer>> rules) {
         for (int sym : rhs) {
             if (sym < 256) return sym;
             Parser.GrammarRule<Integer, Integer> nested = rules.get(sym);

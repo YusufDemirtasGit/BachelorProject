@@ -26,12 +26,13 @@ public class Parser {
     }
 
     public record ParsedGrammar(Map<Integer, GrammarRule<Integer, Integer>> grammarRules, List<Integer> sequence) {
-        public static int getLength(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules, int symbol) {
-            if (symbol < 256) return 1; // Terminal symbols are of length 1
-            Parser.GrammarRule<Integer, Integer> rule = rules.get(symbol);
+        public int getLength(int symbol) {
+            if (symbol < 256) return 1;
+
+            GrammarRule<Integer, Integer> rule = grammarRules.get(symbol);
             if (rule == null) {
                 System.err.println("Tried to get length of undefined rule R" + symbol);
-                return 1;
+                return 1; // Defensive fallback
             }
             return rule.length;
         }

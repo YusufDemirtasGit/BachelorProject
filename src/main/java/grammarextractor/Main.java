@@ -1,12 +1,12 @@
 package grammarextractor;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
 import java.io.*;
 
 import static grammarextractor.Parser.printGrammar;
-import static grammarextractor.Recompressor.*;
 
 public class Main {
     public static void main(String[] args) throws IOException, InterruptedException {
@@ -268,40 +268,102 @@ public class Main {
                     }
                     break;
                 case 11:
-                    // Step 1: Load the full grammar from file
-                    Path inputPath = Path.of("input_grammar.txt"); // replace with actual path
-                    Parser.ParsedGrammar fullGrammar = Parser.parseFile(inputPath);
+                    try {
+                        System.out.println("\nEnter the input file you would like to test recompression roundtrip:");
+                        Path inputFile = Paths.get(scanner.nextLine().trim());
 
-                    // Step 2: Extract a subgrammar (change range as needed)
-                    int start = 2;
-                    int end = 8;
-                    Parser.ParsedGrammar excerpt_rec = Extractor.extractExcerpt(fullGrammar, start, end);
+                        System.out.println("Compressing the file...");
+                        ProcessBuilder encoder = new ProcessBuilder("./encoder", inputFile.toString());
+                        encoder.inheritIO();
+                        Process encodeProcess = encoder.start();
+                        int encodeExit = encodeProcess.waitFor();
+                        if (encodeExit != 0) {
+                            System.err.println("Encoder failed.");
+                            break;
+                        }
 
-                    System.out.println("\n== Extracted Grammar ==");
-                    Extractor.writeGrammarToFile(excerpt_rec, "excerpt_before_recompression.txt");
-                    System.out.println("Excerpt written to: excerpt_before_recompression.txt");
+                        Path compressedFile = Paths.get(inputFile + ".rp");
 
-                    // Step 3: Decompress before recompression for validation
-                    String beforeRecompression = Decompressor.decompress(excerpt_rec);
-                    System.out.println("\nDecompressed before recompression:\n" + beforeRecompression);
+                        System.out.println("Decoding compressed file to human-readable grammar...");
+                        ProcessBuilder decoder = new ProcessBuilder("./decoder", compressedFile.toString(), "input_translated.txt");
+                        decoder.inheritIO();
+                        Process decodeProcess = decoder.start();
+                        int decodeExit = decodeProcess.waitFor();
+                        if (decodeExit != 0) {
+                            System.err.println("Decoder failed.");
+                            break;
+                        }
 
-                    // Step 4: Recompress
-                    Recompressor.recompress(excerpt_rec);
+                        System.out.println("Parsing the grammar...");
+                        Parser.ParsedGrammar fullGrammar = Parser.parseFile(Paths.get("input_translated.txt"));
 
-                    // Step 5: Decompress again for validation
-                    String afterRecompression = Decompressor.decompress(excerpt_rec);
-                    System.out.println("\nDecompressed after recompression:\n" + afterRecompression);
+                        System.out.println("Enter the start position for extraction:");
+                        int start = Integer.parseInt(scanner.nextLine().trim());
+                        System.out.println("Enter the end position for extraction:");
+                        int end = Integer.parseInt(scanner.nextLine().trim());
 
-                    // Step 6: Output new grammar
-                    Extractor.writeGrammarToFile(excerpt_rec, "excerpt_after_recompression.txt");
-                    System.out.println("Recompressed grammar written to: excerpt_after_recompression.txt");
+                        System.out.println("Extracting grammar excerpt...");
+                        Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(fullGrammar, start, end);
 
-                    // Step 7: Check correctness
-                    if (beforeRecompression.equals(afterRecompression)) {
-                        System.out.println("\n✅ Roundtrip decompression successful. No data loss.");
-                    } else {
-                        System.out.println("\n❌ Roundtrip decompression mismatch detected.");
+                        // Count rules and RHS symbol size before recompression
+                        int ruleCountBefore = excerpt2.grammarRules().size();
+                        int rhsSymbolCountBefore = excerpt2.grammarRules().values().stream()
+                                .mapToInt(rule -> rule.rhs.size())
+                                .sum();
+
+                        System.out.println("Decompressing excerpt before recompression...");
+                        String before = Decompressor.decompress(excerpt2);
+
+                        System.out.println("Writing excerpt to excerpt_before_recompression.txt");
+                        Extractor.writeGrammarToFile(excerpt2, "excerpt_before_recompression.txt");
+
+                        System.out.println("Recompressing excerpt...");
+                        Recompressor.recompress(excerpt2);
+
+                        // Count rules and RHS size after recompression
+                        int ruleCountAfter = excerpt2.grammarRules().size();
+                        int rhsSymbolCountAfter = excerpt2.grammarRules().values().stream()
+                                .mapToInt(rule -> rule.rhs.size())
+                                .sum();
+
+                        System.out.println("Decompressing excerpt after recompression...");
+                        String after = Decompressor.decompress(excerpt2);
+
+                        System.out.println("Writing recompressed grammar to excerpt_after_recompression.txt");
+                        Extractor.writeGrammarToFile(excerpt2, "excerpt_after_recompression.txt");
+
+                        // Compare decompressed output
+                        if (before.equals(after)) {
+                            System.out.println("\nRecompression roundtrip successful. Text preserved.");
+                        } else {
+                            System.out.println("\nRecompression roundtrip failed. Text changed.");
+                        }
+
+                        // Grammar structure stats
+                        System.out.println("\nGrammar size comparison:");
+                        System.out.println("  Number of rules before recompression: " + ruleCountBefore);
+                        System.out.println("  Number of rules after recompression : " + ruleCountAfter);
+                        System.out.println("  Total RHS symbols before recompression: " + rhsSymbolCountBefore);
+                        System.out.println("  Total RHS symbols after recompression : " + rhsSymbolCountAfter);
+
+                        // File size stats
+                        Path beforeFile = Paths.get("excerpt_before_recompression.txt");
+                        Path afterFile = Paths.get("excerpt_after_recompression.txt");
+                        long sizeBefore = Files.size(beforeFile);
+                        long sizeAfter = Files.size(afterFile);
+
+                        System.out.println("\nFile size comparison (in bytes):");
+                        System.out.println("  Size before recompression: " + sizeBefore + " bytes");
+                        System.out.println("  Size after recompression : " + sizeAfter + " bytes");
+
+                        double ratio = (sizeAfter == 0) ? 0.0 : ((double) sizeBefore / sizeAfter);
+                        System.out.printf("  Compression ratio: %.2f×\n", ratio);
+
+                    } catch (Exception e) {
+                        System.err.println("An error occurred during recompression roundtrip: " + e.getMessage());
+                        e.printStackTrace();
                     }
+                    break;
 
 
 
