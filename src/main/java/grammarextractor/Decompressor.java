@@ -10,58 +10,61 @@ public class Decompressor {
     public static String decompress(Parser.ParsedGrammar parsedGrammar) {
         StringBuilder output = new StringBuilder();
 
-        for (int grammarRule : parsedGrammar.sequence()) {
-            expandLeaf(grammarRule, parsedGrammar.grammarRules(), output);
+        for (int symbol : parsedGrammar.sequence()) {
+            expand(symbol, parsedGrammar.grammarRules(), parsedGrammar.metadata(), output);
         }
 
         return output.toString();
     }
 
-    // I actually wanted to call it just expand, but since this is a direct translation of the original code by Re_Serp by Shirou Maruyama, I leave the name as is
-    private static void expandLeaf(int symbol, Map<Integer, Parser.GrammarRule<Integer, Integer>> grammar, StringBuilder output) {
+    private static void expand(int symbol,
+                               Map<Integer, List<Integer>> grammar,
+                               Map<Integer, RuleMetadata> metadata,
+                               StringBuilder output) {
+
         if (symbol < 256) {
-            // Current Symbol is a Terminal: convert to readable character
             output.append((char) symbol);
-        } else {
-            // Current Symbol is a Non-terminal: expand using GrammarRules
-            Parser.GrammarRule<Integer, Integer> rule = grammar.get(symbol);
-            if (rule == null) {
-                throw new IllegalArgumentException("Missing rule for symbol: " + symbol);
-            }
+            return;
+        }
 
-            // Idea is to expand all RHS symbols recursively until we hit a terminal
-            for (int subSymbol : rule.rhs) {
-                expandLeaf(subSymbol, grammar, output);
-            }
+        List<Integer> rhs = grammar.get(symbol);
+        if (rhs == null) {
+            throw new IllegalArgumentException("Missing rule for non-terminal: R" + symbol);
+        }
+
+        for (int sub : rhs) {
+            expand(sub, grammar, metadata, output);
         }
     }
 
-    // Streaming decompression variant — decompresses the grammar directly into a Writer without building a full in-memory String
     public static void decompressToWriter(Parser.ParsedGrammar parsedGrammar, Writer writer) throws IOException {
-        Map<Integer, Parser.GrammarRule<Integer, Integer>> rules = parsedGrammar.grammarRules();
+        Map<Integer, List<Integer>> grammar = parsedGrammar.grammarRules();
+        Map<Integer, RuleMetadata> metadata = parsedGrammar.metadata();
 
-        for (int grammarRule : parsedGrammar.sequence()) {
-            expandToWriter(grammarRule, rules, writer);
+        for (int symbol : parsedGrammar.sequence()) {
+            expandToWriter(symbol, grammar, metadata, writer);
         }
 
-        writer.flush(); // Flush the output when finished
+        writer.flush();
     }
 
-    // Recursive expansion that writes symbols directly to the Writer
-    private static void expandToWriter(int symbol, Map<Integer, Parser.GrammarRule<Integer, Integer>> grammar, Writer writer) throws IOException {
-        if (symbol < 256) {
-            // Terminal symbol: write character directly
-            writer.write((char) symbol);
-        } else {
-            // Non-terminal: expand recursively
-            Parser.GrammarRule<Integer, Integer> rule = grammar.get(symbol);
-            if (rule == null) {
-                throw new IllegalArgumentException("Missing rule for symbol: " + symbol);
-            }
+    private static void expandToWriter(int symbol,
+                                       Map<Integer, List<Integer>> grammar,
+                                       Map<Integer, RuleMetadata> metadata,
+                                       Writer writer) throws IOException {
 
-            for (int subSymbol : rule.rhs) {
-                expandToWriter(subSymbol, grammar, writer);
-            }
+        if (symbol < 256) {
+            writer.write((char) symbol);
+            return;
+        }
+
+        List<Integer> rhs = grammar.get(symbol);
+        if (rhs == null) {
+            throw new IllegalArgumentException("Missing rule for non-terminal: R" + symbol);
+        }
+
+        for (int sub : rhs) {
+            expandToWriter(sub, grammar, metadata, writer);
         }
     }
 }
