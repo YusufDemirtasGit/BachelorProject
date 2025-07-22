@@ -23,12 +23,11 @@ public class RuleMetadata {
     public int getPho() { return pho; }
     public boolean isSingleBlock() { return isSB; }
 
-    public static Map<Integer, RuleMetadata> computeAll(
-            Map<Integer, List<Integer>> rules,
-            Map<Integer, Set<Integer>> reverseUsageMap,
-            List<Integer> sequence
-    ) {
+    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
         System.out.println("=== Starting Metadata Computation ===");
+
+        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+        List<Integer> sequence = grammar.sequence();
 
         Map<Integer, RuleMetadata> meta = new HashMap<>();
         Map<Integer, Integer> memoLen = new HashMap<>();

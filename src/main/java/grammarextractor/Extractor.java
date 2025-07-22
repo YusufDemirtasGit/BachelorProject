@@ -77,9 +77,9 @@ public class Extractor {
         Map<Integer, Set<Integer>> usageGraph = buildUsageGraph(allRules);
         copyReachableRules(excerptSequence, allRules, excerptRules, usageGraph);
 
-        return new Parser.ParsedGrammar(excerptRules, excerptSequence,
-                RuleMetadata.computeAll(excerptRules, buildReverseUsageMap(excerptRules), excerptSequence));
-
+        Parser.ParsedGrammar incomplete = new Parser.ParsedGrammar(excerptRules, excerptSequence, Collections.emptyMap());
+        Map<Integer, RuleMetadata> computedMeta = RuleMetadata.computeAll(incomplete);
+        return new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
     }
 
     private static void processStart(int symbol, Parser.ParsedGrammar input, Map<Integer, List<Integer>> excerptRules,

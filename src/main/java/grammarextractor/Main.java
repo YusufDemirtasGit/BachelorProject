@@ -23,6 +23,9 @@
                 System.out.println("8. Decompress Human readable format back into string");
                 System.out.println("9. PopInlet Roundtrip");
                 System.out.println("10. PopOutlet Roundtrip");
+                System.out.println("11. Metadata Roundtrip");
+                System.out.println("12. Frequency Roundtrip");
+                System.out.println("13. Roundtrip Frequency Comparison");
                 System.out.println("99. Exit");
 
                 System.out.print("Enter your choice: ");
@@ -237,300 +240,106 @@
                             e.printStackTrace();
                         }
                         break;
+                    case 12:  // Roundtrip: Just compute and print bigram frequencies
+                        System.out.print("\nEnter the path to a human-readable grammar file: ");
+                        String grammarFile3 = scanner.nextLine().trim();
 
+                        try {
+                            // Step 1: Parse the grammar (this computes metadata as well)
+                            System.out.println("\nParsing grammar and computing metadata...");
+                            Parser.ParsedGrammar parsed = Parser.parseFile(Path.of(grammarFile3));
 
-//                    case 11:
-//                        try {
-//                            System.out.println("\nEnter the path to the human-readable grammar file:");
-//                            String filename = scanner.nextLine().trim();
-//                            Path grammarPath = Paths.get(filename);
-//
-//                            System.out.println("Parsing the grammar...");
-//                            Parser.ParsedGrammar inputGrammar = Parser.parseFile(grammarPath);
-//
-//                            System.out.println("Enter output file name prefix (e.g., 'roundtrip'): ");
-//                            String prefix = scanner.nextLine().trim();
-//
-//                            // Decompress original grammar
-//                            System.out.println("Decompressing original grammar...");
-//                            String originalText = Decompressor.decompress(inputGrammar);
-//                            try (PrintWriter out = new PrintWriter(prefix + "_original.txt")) {
-//                                out.println(originalText);
-//                            }
-//                            System.out.println("Original text length: " + originalText.length());
-//                            System.out.println("Original grammar size: " + inputGrammar.grammarRules().size() + " rules");
-//
-//                            // Run recompression
-//                            System.out.println("\nRunning RePair recompression...");
-//                            System.out.println("Note: Sentinels # and $ will be added to the beginning and end");
-//                            Recompressor recompressor = new Recompressor(inputGrammar, true);
-//                            Parser.ParsedGrammar recompressed = recompressor.runRecompression();
-//
-//                            // Decompress recompressed grammar
-//                            System.out.println("\nDecompressing recompressed grammar...");
-//                            String recompressedText = Decompressor.decompress(recompressed);
-//
-//                            // Remove sentinels # and $ from the recompressed text
-//                            String cleanedText = recompressedText;
-//                            if (recompressedText.startsWith("#") && recompressedText.endsWith("$")) {
-//                                cleanedText = recompressedText.substring(1, recompressedText.length() - 1);
-//                                System.out.println("Removed sentinels from recompressed text");
-//                            }
-//
-//                            try (PrintWriter out = new PrintWriter(prefix + "_recompressed.txt")) {
-//                                out.println(cleanedText);
-//                            }
-//
-//                            // Write recompressed text with sentinels for inspection
-//                            try (PrintWriter out = new PrintWriter(prefix + "_recompressed_with_sentinels.txt")) {
-//                                out.println(recompressedText);
-//                            }
-//
-//                            // Write recompressed grammar
-//                            System.out.println("\nWriting recompressed grammar to " + prefix + "_grammar.txt");
-//                            Extractor.writeGrammarToFile(recompressed, prefix + "_grammar.txt");
-//                            System.out.println("Recompressed grammar size: " + recompressed.grammarRules().size() + " rules");
-//
-//                            // Compare results
-//                            System.out.println("\n=== Roundtrip Results ===");
-//                            System.out.println("Original length: " + originalText.length());
-//                            System.out.println("Recompressed length (without sentinels): " + cleanedText.length());
-//                            System.out.println("Original rules: " + inputGrammar.grammarRules().size());
-//                            System.out.println("Recompressed rules: " + recompressed.grammarRules().size());
-//
-//                            if (originalText.equals(cleanedText)) {
-//                                System.out.println("\n✅ Recompression roundtrip successful! Text preserved.");
-//
-//                                // Calculate compression ratio
-//                                int originalRules = inputGrammar.grammarRules().size();
-//                                int recompressedRules = recompressed.grammarRules().size();
-//                                double ratio = (double) recompressedRules / originalRules;
-//                                System.out.printf("Compression ratio: %.2f%% of original grammar size%n", ratio * 100);
-//                            } else {
-//                                System.out.println("\n❌ Recompression roundtrip failed! Text changed.");
-//
-//                                // Show where differences start
-//                                int diffIndex = -1;
-//                                for (int i = 0; i < Math.min(originalText.length(), cleanedText.length()); i++) {
-//                                    if (originalText.charAt(i) != cleanedText.charAt(i)) {
-//                                        diffIndex = i;
-//                                        break;
-//                                    }
-//                                }
-//
-//                                if (diffIndex >= 0) {
-//                                    System.out.println("First difference at position " + diffIndex);
-//                                    int start = Math.max(0, diffIndex - 20);
-//                                    int end = Math.min(diffIndex + 20, Math.min(originalText.length(), cleanedText.length()));
-//                                    System.out.println("Original: ..." + originalText.substring(start, end) + "...");
-//                                    System.out.println("Recompressed: ..." + cleanedText.substring(start, end) + "...");
-//                                } else if (originalText.length() != cleanedText.length()) {
-//                                    System.out.println("Texts have different lengths");
-//                                }
-//                            }
-//
-//                            // Additional statistics
-//                            System.out.println("\n=== Grammar Statistics ===");
-//                            System.out.println("Files created:");
-//                            System.out.println("  - " + prefix + "_original.txt (original decompressed text)");
-//                            System.out.println("  - " + prefix + "_recompressed.txt (recompressed text without sentinels)");
-//                            System.out.println("  - " + prefix + "_recompressed_with_sentinels.txt (with # and $)");
-//                            System.out.println("  - " + prefix + "_grammar.txt (recompressed grammar)");
-//
-//                        } catch (Exception e) {
-//                            System.err.println("An error occurred during recompression roundtrip: " + e.getMessage());
-//                            e.printStackTrace();
-//                        }
-//                        break;
+                            // Step 2: Print grammar rules
+                            System.out.println("\n=== Grammar Rules ===");
+                            Parser.printGrammar(parsed);
 
-                    //                case 9:
-    //                    try {
-    //                        System.out.println("\nEnter the path to the human-readable grammar file:");
-    //                        String filename = scanner.nextLine().trim();
-    //                        Path path = Paths.get(filename);
-    //                        Parser.ParsedGrammar grammarInlet = Parser.parseFile(path);
-    //
-    //                        System.out.println("\nBefore PopInlet:");
-    //                        printGrammar(grammarInlet);
-    //
-    //                        // Decompress before PopInlet
-    //                        String beforeDecompressed = Decompressor.decompress(grammarInlet);
-    //
-    //                        // Perform PopInlet
-    //                        Map<Integer, Map<Integer, Integer>> usageMatrix = Recompressor.buildUsageMatrix(grammarInlet.grammarRules());
-    //                        Map<Integer, Set<Integer>> reverseUsageMap = Recompressor.buildReverseUsageMap(usageMatrix);
-    //                        Recompressor.popInlet(grammarInlet.grammarRules(), reverseUsageMap);
-    //
-    //                        System.out.println("\nAfter PopInlet:");
-    //                        printGrammar(grammarInlet);
-    //
-    //                        // Decompress after PopInlet
-    //                        String afterDecompressed = Decompressor.decompress(grammarInlet);
-    //
-    //                        // Compare decompressed results
-    //                        System.out.println("\n\nDecompressed results before pop inlet:");
-    //                        System.out.println(beforeDecompressed);
-    //                        System.out.println("\n\nDecompressed results after pop inlet:");
-    //                        System.out.println(afterDecompressed);
-    //                        if (beforeDecompressed.equals(afterDecompressed)) {
-    //                            System.out.println("\n✅ Sequences are identical after PopInlet.");
-    //                        } else {
-    //                            System.out.println("\n❌ Sequences differ after PopInlet.");
-    //                        }
-    //
-    //                    } catch (Exception e) {
-    //                        System.err.println("\nAn error occurred during PopInlet test: " + e.getMessage());
-    //                        e.printStackTrace();
-    //                    }
-    //                case 10:
-    //                    try {
-    //                        System.out.println("\nEnter the path to the human-readable grammar file:");
-    //                        String filename = scanner.nextLine().trim();
-    //                        Path path = Paths.get(filename);
-    //                        Parser.ParsedGrammar grammarOutlet = Parser.parseFile(path);
-    //
-    //                        System.out.println("\nBefore PopOutlet:");
-    //                        printGrammar(grammarOutlet);
-    //                        // Decompress before PopInlet
-    //                        String beforeDecompressed2 = Decompressor.decompress(grammarOutlet);
-    //
-    //                        Map<Integer, Map<Integer, Integer>> usageMatrix = Recompressor.buildUsageMatrix(grammarOutlet.grammarRules());
-    //                        Map<Integer, Set<Integer>> reverseUsageMap = Recompressor.buildReverseUsageMap(usageMatrix);
-    //
-    //                        Recompressor.popOutlet(grammarOutlet.grammarRules(), reverseUsageMap);
-    //
-    //                        System.out.println("\nAfter PopOutlet:");
-    //                        printGrammar(grammarOutlet);
-    //                        // Decompress after PopInlet
-    //                        String afterDecompressed2 = Decompressor.decompress(grammarOutlet);
-    //
-    //                        // Compare decompressed results
-    //                        System.out.println("\n\nDecompressed results before pop outlet:");
-    //                        System.out.println(beforeDecompressed2);
-    //                        System.out.println("\n\nDecompressed results after pop outlet:");
-    //                        System.out.println(afterDecompressed2);
-    //                        if (beforeDecompressed2.equals(afterDecompressed2)) {
-    //                            System.out.println("\n✅ Sequences are identical after PopOutlet.");
-    //                        } else {
-    //                            System.out.println("\n❌ Sequences differ after PopOutlet.");
-    //                        }
-    //
-    //                    } catch (Exception e) {
-    //                        System.err.println("\nAn error occurred during PopOutlet test: " + e.getMessage());
-    //                        e.printStackTrace();
-    //                    }
-    //                    break;
-    //                case 11:
-    //                    try {
-    //                        System.out.println("\nEnter the input file you would like to test recompression roundtrip:");
-    //                        Path inputFile = Paths.get(scanner.nextLine().trim());
-    //
-    //                        System.out.println("Compressing the file...");
-    //                        ProcessBuilder encoder = new ProcessBuilder("./encoder", inputFile.toString());
-    //                        encoder.inheritIO();
-    //                        Process encodeProcess = encoder.start();
-    //                        int encodeExit = encodeProcess.waitFor();
-    //                        if (encodeExit != 0) {
-    //                            System.err.println("Encoder failed.");
-    //                            break;
-    //                        }
-    //
-    //                        Path compressedFile = Paths.get(inputFile + ".rp");
-    //
-    //                        System.out.println("Decoding compressed file to human-readable grammar...");
-    //                        ProcessBuilder decoder = new ProcessBuilder("./decoder", compressedFile.toString(), "input_translated.txt");
-    //                        decoder.inheritIO();
-    //                        Process decodeProcess = decoder.start();
-    //                        int decodeExit = decodeProcess.waitFor();
-    //                        if (decodeExit != 0) {
-    //                            System.err.println("Decoder failed.");
-    //                            break;
-    //                        }
-    //
-    //                        System.out.println("Parsing the grammar...");
-    //                        Parser.ParsedGrammar fullGrammar = Parser.parseFile(Paths.get("input_translated.txt"));
-    //
-    //                        System.out.println("Enter the start position for extraction:");
-    //                        int start = Integer.parseInt(scanner.nextLine().trim());
-    //                        System.out.println("Enter the end position for extraction:");
-    //                        int end = Integer.parseInt(scanner.nextLine().trim());
-    //
-    //                        System.out.println("Extracting grammar excerpt...");
-    //                        Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(fullGrammar, start, end);
-    //
-    //                        // Count rules and RHS symbol size before recompression
-    //                        int ruleCountBefore = excerpt2.grammarRules().size();
-    //                        int rhsSymbolCountBefore = excerpt2.grammarRules().values().stream()
-    //                                .mapToInt(rule -> rule.rhs.size())
-    //                                .sum();
-    //
-    //                        System.out.println("Decompressing excerpt before recompression...");
-    //                        String before = Decompressor.decompress(excerpt2);
-    //
-    //                        System.out.println("Writing excerpt to excerpt_before_recompression.txt");
-    //                        Extractor.writeGrammarToFile(excerpt2, "excerpt_before_recompression.txt");
-    //
-    //                        System.out.println("Recompressing excerpt...");
-    //                        Recompressor.recompress(excerpt2);
-    //
-    //                        // Count rules and RHS size after recompression
-    //                        int ruleCountAfter = excerpt2.grammarRules().size();
-    //                        int rhsSymbolCountAfter = excerpt2.grammarRules().values().stream()
-    //                                .mapToInt(rule -> rule.rhs.size())
-    //                                .sum();
-    //
-    //                        System.out.println("Decompressing excerpt after recompression...");
-    //                        String after = Decompressor.decompress(excerpt2);
-    //
-    //                        System.out.println("Writing recompressed grammar to excerpt_after_recompression.txt");
-    //                        Extractor.writeGrammarToFile(excerpt2, "excerpt_after_recompression.txt");
-    //
-    //                        // Compare decompressed output
-    //                        if (before.equals(after)) {
-    //                            System.out.println("\nRecompression roundtrip successful. Text preserved.");
-    //                        } else {
-    //                            System.out.println("\nRecompression roundtrip failed. Text changed.");
-    //                        }
-    //
-    //                        // Grammar structure stats
-    //                        System.out.println("\nGrammar size comparison:");
-    //                        System.out.println("  Number of rules before recompression: " + ruleCountBefore);
-    //                        System.out.println("  Number of rules after recompression : " + ruleCountAfter);
-    //                        System.out.println("  Total RHS symbols before recompression: " + rhsSymbolCountBefore);
-    //                        System.out.println("  Total RHS symbols after recompression : " + rhsSymbolCountAfter);
-    //
-    //                        // File size stats
-    //                        Path beforeFile = Paths.get("excerpt_before_recompression.txt");
-    //                        Path afterFile = Paths.get("excerpt_after_recompression.txt");
-    //                        long sizeBefore = Files.size(beforeFile);
-    //                        long sizeAfter = Files.size(afterFile);
-    //
-    //                        System.out.println("\nFile size comparison (in bytes):");
-    //                        System.out.println("  Size before recompression: " + sizeBefore + " bytes");
-    //                        System.out.println("  Size after recompression : " + sizeAfter + " bytes");
-    //
-    //                        double ratio = (sizeAfter == 0) ? 0.0 : ((double) sizeBefore / sizeAfter);
-    //                        System.out.printf("  Compression ratio: %.2f×\n", ratio);
-    //
-    //                    } catch (Exception e) {
-    //                        System.err.println("An error occurred during recompression roundtrip: " + e.getMessage());
-    //                        e.printStackTrace();
-    //                    }
-    //                    break;
+                            // Step 3: Print metadata
+                            System.out.println("\n=== Rule Metadata ===");
+                            for (Map.Entry<Integer, RuleMetadata> entry : parsed.metadata().entrySet()) {
+                                int ruleId = entry.getKey();
+                                RuleMetadata meta = entry.getValue();
+                                System.out.printf(
+                                        "R%d: vocc=%d, length=%d, lambda=%s, pho=%s, singleBlock=%s%n",
+                                        ruleId,
+                                        meta.getVocc(),
+                                        meta.getLength(),
+                                        meta.getLambda() == -1 ? "None" : meta.getLambda(),
+                                        meta.getPho() == -1 ? "None" : meta.getPho(),
+                                        meta.isSingleBlock()
+                                );
+                            }
 
+                            // Step 4: Compute bigram frequencies using compressed-space method
+                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeFrequencies(parsed);  // static call
 
+                            // Step 5: Print frequencies
+                            System.out.println("\n=== Bigram Frequencies ===");
+                            for (Map.Entry<Pair<Integer, Integer>, Integer> entry : freqs.entrySet()) {
+                                Pair<Integer, Integer> bigram = entry.getKey();
+                                int freq = entry.getValue();
+
+                                String left = (bigram.first < 256) ? "'" + (char) (int) bigram.first + "'" : "R" + bigram.first;
+                                String right = (bigram.second < 256) ? "'" + (char) (int) bigram.second + "'" : "R" + bigram.second;
+
+                                System.out.printf("Bigram (%s, %s): %d%n", left, right, freq);
+                            }
+
+                        } catch (Exception e) {
+                            System.err.println("❌ Error during frequency roundtrip: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                        break;
+                    case 13: {
+                        Path grammarFile12 = Path.of("test_translated.txt");
+                        Parser.ParsedGrammar parsed = Parser.parseFile(grammarFile12);
+
+                        // ✅ Add sentinels
+                        parsed = Recompressor.addSentinels(parsed);
+
+                        // ✅ Recompute and reattach metadata
+                        Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(parsed);
+                        parsed = new Parser.ParsedGrammar(parsed.grammarRules(), parsed.sequence(), newMetadata);
+
+                        System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
+
+                        Map<Pair<Integer, Integer>, Integer> advancedFreqs = Recompressor.computeFrequencies(parsed);
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed);
+
+                        Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
+                        allBigrams.addAll(advancedFreqs.keySet());
+                        allBigrams.addAll(naiveFreqs.keySet());
+
+                        boolean mismatchFound = false;
+
+                        for (Pair<Integer, Integer> bigram : allBigrams) {
+                            int advCount = advancedFreqs.getOrDefault(bigram, 0);
+                            int naiveCount = naiveFreqs.getOrDefault(bigram, 0);
+                            if (advCount != naiveCount) {
+                                mismatchFound = true;
+                                String left = formatSymbol(bigram.first);
+                                String right = formatSymbol(bigram.second);
+                                System.err.printf("❌ Mismatch for bigram (%s, %s): advanced=%d, naive=%d%n",
+                                        left, right, advCount, naiveCount);
+                            }
+                        }
+
+                        if (!mismatchFound) {
+                            System.out.println("✅ All bigram frequencies match between compressed and naive method!");
+                        } else {
+                            System.err.println("🚨 Some mismatches found! Check logs above.");
+                        }
+                        break;
+                    }
 
                     case 99:
                         System.exit(0);
+                        break;
 
                     default:
                         System.out.println("Invalid choice or not yet implemented");
                         break;
                 }
-
-
             } while (true);
-
         }
 
         public static boolean areFilesEqual(Path file1, Path file2) throws IOException {
@@ -542,14 +351,32 @@
                     line1 = reader1.readLine();
                     line2 = reader2.readLine();
 
-                    if (line1 == null && line2 == null) {
-                        return true; // Both files ended, contents identical
-                    }
-                    //it should not be necessary to check for line2 for null
-                    if (line1 == null || !line1.equals(line2)) {
-                        return false;
-                    }
+                    if (line1 == null && line2 == null) return true;
+                    if (line1 == null || !line1.equals(line2)) return false;
                 }
             }
+        }
+
+        public static Map<Pair<Integer, Integer>, Integer> computeFromDecompressed(Parser.ParsedGrammar grammar) {
+            String decompressed = Decompressor.decompress(grammar);
+            Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
+            if (decompressed.length() < 2) return freqMap;
+
+            for (int i = 0; i < decompressed.length() - 1; i++) {
+                int a = decompressed.charAt(i);
+                int b = decompressed.charAt(i + 1);
+                Pair<Integer, Integer> bigram = Pair.of(a, b);
+                freqMap.merge(bigram, 1, Integer::sum);
+            }
+            return freqMap;
+        }
+
+        private static String formatSymbol(int sym) {
+            if (sym < 32) return "'\\x" + Integer.toHexString(sym) + "'";
+            if (sym == 32) return "' '";
+            if (sym == 35) return "'#'";
+            if (sym == 36) return "'$'";
+            if (sym < 127) return "'" + (char) sym + "'";
+            return "R" + sym;
         }
     }

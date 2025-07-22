@@ -40,13 +40,13 @@ public class Parser {
             grammarRules.put(ruleId, rhs);
         }
 
-        // Step: Compute reverse usage map (needed by RuleMetadata)
-        Map<Integer, Set<Integer>> reverseUsageMap = buildReverseUsageMap(grammarRules);
+        // 1. Build a grammar with empty metadata
+        ParsedGrammar partialGrammar = new ParsedGrammar(grammarRules, sequence, Collections.emptyMap());
 
-        // Step: Compute metadata (length, lambda, rho, vocc, isSB)
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(grammarRules, reverseUsageMap, sequence);
+        // 2. Compute metadata
+        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar);
 
-
+        // 3. Return full grammar
         return new ParsedGrammar(grammarRules, sequence, metadata);
     }
 
