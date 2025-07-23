@@ -5,23 +5,30 @@ import java.util.*;
 public class RuleMetadata {
     private final int vocc;
     private final int length;
-    private final int lambda;
-    private final int pho;
+    private final int leftmostTerminal;
+    private final int rightmostTerminal;
     private final boolean isSB;
+    private final int leftRunLength;
+    private final int rightRunLength;
 
-    public RuleMetadata(int vocc, int length, int lambda, int pho, boolean isSB) {
+    public RuleMetadata(int vocc, int length, int leftmostTerminal, int rightmostTerminal,
+                        boolean isSB, int leftRunLength, int rightRunLength) {
         this.vocc = vocc;
         this.length = length;
-        this.lambda = lambda;
-        this.pho = pho;
+        this.leftmostTerminal = leftmostTerminal;
+        this.rightmostTerminal = rightmostTerminal;
         this.isSB = isSB;
+        this.leftRunLength = leftRunLength;
+        this.rightRunLength = rightRunLength;
     }
 
     public int getVocc() { return vocc; }
     public int getLength() { return length; }
-    public int getLambda() { return lambda; }
-    public int getPho() { return pho; }
+    public int getLeftmostTerminal() { return leftmostTerminal; }
+    public int getRightmostTerminal() { return rightmostTerminal; }
     public boolean isSingleBlock() { return isSB; }
+    public int getLeftRunLength() { return leftRunLength; }
+    public int getRightRunLength() { return rightRunLength; }
 
     public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
         System.out.println("=== Starting Metadata Computation ===");
@@ -31,57 +38,110 @@ public class RuleMetadata {
 
         Map<Integer, RuleMetadata> meta = new HashMap<>();
         Map<Integer, Integer> memoLen = new HashMap<>();
-        Map<Integer, Integer> memoLam = new HashMap<>();
-        Map<Integer, Integer> memoPho = new HashMap<>();
-        Map<Integer, Integer> memoSB = new HashMap<>();  // maps ruleId to terminal if single-block, else -1
+        Map<Integer, Integer> memoLeft = new HashMap<>();
+        Map<Integer, Integer> memoRight = new HashMap<>();
+        Map<Integer, Integer> memoSB = new HashMap<>();
+        Map<Integer, Integer> memoLeftRun = new HashMap<>();
+        Map<Integer, Integer> memoRightRun = new HashMap<>();
 
-        Map<Integer, Integer> totalUsage = new HashMap<>();
-
+        // Count references
+        Map<Integer, Integer> directUsage = new HashMap<>();
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int lhs = entry.getKey();
-            List<Integer> rhs = entry.getValue();
-            System.out.println("Scanning RHS of Rule R" + lhs + ": " + rhs);
-            for (int sym : rhs) {
+            for (int sym : entry.getValue()) {
                 if (sym >= 256) {
-                    totalUsage.merge(sym, 1, Integer::sum);
+                    directUsage.merge(sym, 1, Integer::sum);
                 }
             }
         }
-
         if (sequence != null) {
             for (int sym : sequence) {
                 if (sym >= 256) {
-                    totalUsage.merge(sym, 1, Integer::sum);
+                    directUsage.merge(sym, 1, Integer::sum);
                 }
             }
         }
 
+        // Compute vocc
+        Map<Integer, Integer> voccMemo = new HashMap<>();
+        for (int sym : sequence) {
+            if (sym >= 256) {
+                computeVocc(sym, rules, directUsage, voccMemo, sequence);
+            }
+        }
+        for (int ruleId : rules.keySet()) {
+            if (!voccMemo.containsKey(ruleId)) {
+                computeVocc(ruleId, rules, directUsage, voccMemo, sequence);
+            }
+        }
+
+        // Compute metadata
         for (int ruleId : rules.keySet()) {
             System.out.println("\n--- Computing Metadata for Rule R" + ruleId + " ---");
 
-            int vocc = totalUsage.getOrDefault(ruleId, 0);
+            int vocc = voccMemo.getOrDefault(ruleId, 0);
             System.out.println("Virtual Occurrence Count (vocc): " + vocc);
 
             int length = computeLength(ruleId, rules, memoLen);
             System.out.println("Expansion Length: " + length);
 
-            int lambda = computeFirstTerminal(ruleId, rules, memoLam);
-            System.out.println("Lambda (first terminal): " + (lambda == -1 ? "None" : lambda));
+            int left = computeFirstTerminal(ruleId, rules, memoLeft);
+            System.out.println("Leftmost Terminal: " + (left == -1 ? "None" : left));
 
-            int pho = computeLastTerminal(ruleId, rules, memoPho);
-            System.out.println("Pho (last terminal): " + (pho == -1 ? "None" : pho));
+            int right = computeLastTerminal(ruleId, rules, memoRight);
+            System.out.println("Rightmost Terminal: " + (right == -1 ? "None" : right));
 
             boolean isSB = isSingleBlock(ruleId, rules, memoSB);
             if (isSB) {
                 System.out.println("Single-block detected (transitively): all symbols reduce to the same terminal.");
             }
 
-            RuleMetadata ruleMeta = new RuleMetadata(vocc, length, lambda, pho, isSB);
+            int leftRun = computeLeftRun(ruleId, rules, memoLeftRun, memoLeft, memoLen);
+            System.out.println("Left Run Length: " + leftRun);
+
+            int rightRun = computeRightRun(ruleId, rules, memoRightRun, memoRight, memoLen);
+            System.out.println("Right Run Length: " + rightRun);
+
+            RuleMetadata ruleMeta = new RuleMetadata(vocc, length, left, right, isSB, leftRun, rightRun);
             meta.put(ruleId, ruleMeta);
         }
 
         System.out.println("=== Metadata Computation Completed ===");
         return meta;
+    }
+
+    private static int computeVocc(int ruleId,
+                                   Map<Integer, List<Integer>> rules,
+                                   Map<Integer, Integer> directUsage,
+                                   Map<Integer, Integer> memo,
+                                   List<Integer> sequence) {
+        if (memo.containsKey(ruleId)) {
+            return memo.get(ruleId);
+        }
+
+        int voccValue = 0;
+        for (int sym : sequence) {
+            if (sym == ruleId) {
+                voccValue++;
+            }
+        }
+
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            int parentRule = entry.getKey();
+            List<Integer> rhs = entry.getValue();
+            int countInParent = 0;
+            for (int sym : rhs) {
+                if (sym == ruleId) {
+                    countInParent++;
+                }
+            }
+            if (countInParent > 0) {
+                int parentVocc = computeVocc(parentRule, rules, directUsage, memo, sequence);
+                voccValue += countInParent * parentVocc;
+            }
+        }
+
+        memo.put(ruleId, voccValue);
+        return voccValue;
     }
 
     private static boolean isSingleBlock(int id, Map<Integer, List<Integer>> rules, Map<Integer, Integer> memoSB) {
@@ -134,17 +194,12 @@ public class RuleMetadata {
                                             Map<Integer, List<Integer>> rules,
                                             Map<Integer, Integer> memo,
                                             Set<Integer> seen) {
-        if (memo.containsKey(id)) {
-            System.out.println("Memo hit: Length of R" + id + " = " + memo.get(id));
-            return memo.get(id);
-        }
+        if (memo.containsKey(id)) return memo.get(id);
         if (!rules.containsKey(id)) {
-            System.out.println("Rule R" + id + " not found. Returning length 0.");
             memo.put(id, 0);
             return 0;
         }
         if (seen.contains(id)) {
-            System.out.println("Cycle detected in rule R" + id + ", skipping.");
             memo.put(id, 0);
             return 0;
         }
@@ -152,7 +207,6 @@ public class RuleMetadata {
         seen.add(id);
         int len = 0;
         List<Integer> rhs = rules.get(id);
-        System.out.println("Computing expansion length for R" + id + ": " + rhs);
         for (int sym : rhs) {
             if (sym < 256) {
                 len++;
@@ -162,18 +216,13 @@ public class RuleMetadata {
         }
         seen.remove(id);
         memo.put(id, len);
-        System.out.println("Computed Length for R" + id + ": " + len);
         return len;
     }
 
     private static int computeFirstTerminal(int id, Map<Integer, List<Integer>> rules,
                                             Map<Integer, Integer> memo) {
-        if (memo.containsKey(id)) {
-            System.out.println("Memo hit: Lambda of R" + id + " = " + memo.get(id));
-            return memo.get(id);
-        }
+        if (memo.containsKey(id)) return memo.get(id);
         if (!rules.containsKey(id)) {
-            System.out.println("Rule R" + id + " not found. Lambda = -1");
             memo.put(id, -1);
             return -1;
         }
@@ -195,12 +244,8 @@ public class RuleMetadata {
 
     private static int computeLastTerminal(int id, Map<Integer, List<Integer>> rules,
                                            Map<Integer, Integer> memo) {
-        if (memo.containsKey(id)) {
-            System.out.println("Memo hit: Pho of R" + id + " = " + memo.get(id));
-            return memo.get(id);
-        }
+        if (memo.containsKey(id)) return memo.get(id);
         if (!rules.containsKey(id)) {
-            System.out.println("Rule R" + id + " not found. Pho = -1");
             memo.put(id, -1);
             return -1;
         }
@@ -221,5 +266,80 @@ public class RuleMetadata {
         }
         memo.put(id, -1);
         return -1;
+    }
+
+    private static int computeLeftRun(int id, Map<Integer, List<Integer>> rules,
+                                      Map<Integer, Integer> memoRun,
+                                      Map<Integer, Integer> memoTerminal,
+                                      Map<Integer, Integer> memoLength) {
+        if (memoRun.containsKey(id)) return memoRun.get(id);
+        if (!rules.containsKey(id)) return 0;
+
+        List<Integer> rhs = rules.get(id);
+        if (rhs.isEmpty()) return 0;
+
+        int base = computeFirstTerminal(id, rules, memoTerminal);
+        if (base == -1) {
+            memoRun.put(id, 0);
+            return 0;
+        }
+
+        int run = 0;
+        for (int sym : rhs) {
+            if (sym < 256) {
+                if (sym == base) run++;
+                else break;
+            } else {
+                int subFirst = computeFirstTerminal(sym, rules, memoTerminal);
+                if (subFirst != base) break;
+
+                int subRun = computeLeftRun(sym, rules, memoRun, memoTerminal, memoLength);
+                run += subRun;
+
+                int subLen = computeLength(sym, rules, memoLength);
+                if (subRun < subLen) break;
+            }
+        }
+
+        memoRun.put(id, run);
+        return run;
+    }
+
+    private static int computeRightRun(int id, Map<Integer, List<Integer>> rules,
+                                       Map<Integer, Integer> memoRun,
+                                       Map<Integer, Integer> memoTerminal,
+                                       Map<Integer, Integer> memoLength) {
+        if (memoRun.containsKey(id)) return memoRun.get(id);
+        if (!rules.containsKey(id)) return 0;
+
+        List<Integer> rhs = rules.get(id);
+        if (rhs.isEmpty()) return 0;
+
+        int base = computeLastTerminal(id, rules, memoTerminal);
+        if (base == -1) {
+            memoRun.put(id, 0);
+            return 0;
+        }
+
+        int run = 0;
+        for (int i = rhs.size() - 1; i >= 0; i--) {
+            int sym = rhs.get(i);
+            if (sym < 256) {
+                if (sym == base) run++;
+                else break;
+            } else {
+                int subLast = computeLastTerminal(sym, rules, memoTerminal);
+                if (subLast != base) break;
+
+                int subRun = computeRightRun(sym, rules, memoRun, memoTerminal, memoLength);
+                run += subRun;
+
+                int subLen = computeLength(sym, rules, memoLength);
+                if (subRun < subLen) break;
+            }
+        }
+
+        memoRun.put(id, run);
+        return run;
     }
 }

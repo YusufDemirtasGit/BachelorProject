@@ -156,18 +156,6 @@ public class Extractor {
         return graph;
     }
 
-    private static Map<Integer, Set<Integer>> buildReverseUsageMap(Map<Integer, List<Integer>> rules) {
-        Map<Integer, Set<Integer>> reverse = new HashMap<>();
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int user = entry.getKey();
-            for (int symbol : entry.getValue()) {
-                if (symbol >= 256) {
-                    reverse.computeIfAbsent(symbol, k -> new HashSet<>()).add(user);
-                }
-            }
-        }
-        return reverse;
-    }
 
     private static void copyReachableRules(List<Integer> sequence,
                                            Map<Integer, List<Integer>> allRules,
