@@ -5,9 +5,6 @@
     import java.util.*;
     import java.io.*;
 
-    import static grammarextractor.Recompressor.popInlet;
-    import static grammarextractor.Recompressor.popOutLet;
-
     public class Main {
         public static void main(String[] args) throws IOException, InterruptedException {
             Scanner scanner = new Scanner(System.in);
@@ -296,7 +293,7 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("Test_grammar_20_words.txt");
+                        Path grammarFile13 = Path.of("recompressed once.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Wrap top-level sequence with sentinels and reduce to a root rule
@@ -420,7 +417,7 @@
 
                         break;
                     }
-                    case 15: {
+                    case 15:
                         Path grammarFile15 = Path.of("Test_grammar_20_words.txt"); // Replace with actual file path
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile15);
 
@@ -487,12 +484,25 @@
                         }
 
                         break;
-                    }
 
+                    case 16:
+                        Path grammarFile16 = Path.of("Test_grammar_20_words.txt");
+                        Parser.ParsedGrammar original16 = Parser.parseFile(grammarFile16);
+                        Recompressor.recompressOnceVerbose(original16);
+                        break;
 
+                    case 17:
+                        Path grammarFile17 = Path.of("Test_grammar_20_words.txt");
+                        Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
+                        Recompressor.recompressTwiceVerbose(original17);
+                        break;
 
-
-
+                    case 18:
+                        Path grammarFile18 = Path.of("Test_grammar_20_words.txt");
+                        Parser.ParsedGrammar original18 = Parser.parseFile(grammarFile18);
+                        Recompressor.recompressUntilDoneVerbose(original18);
+                        break;
+                    
                     case 99:
                         System.exit(0);
                         break;
@@ -575,19 +585,6 @@
                 Pair<Integer, Integer> startBigram = Pair.of((int) decompressed.charAt(0), (int) decompressed.charAt(1));
                 Pair<Integer, Integer> endBigram = Pair.of((int) decompressed.charAt(decompressed.length() - 2),
                         (int) decompressed.charAt(decompressed.length() - 1));
-
-                if (startBigram.first == hash && bigramFreqs.containsKey(startBigram)) {
-                    bigramFreqs.computeIfPresent(startBigram, (k, v) -> (v > 1) ? v - 1 : null);
-                    System.out.printf("Adjusted start bigram (%c,%c): -1%n",
-                            (char) startBigram.first.intValue(), (char) startBigram.second.intValue());
-                }
-
-                if (endBigram.second == dollar && bigramFreqs.containsKey(endBigram)) {
-                    bigramFreqs.computeIfPresent(endBigram, (k, v) -> (v > 1) ? v - 1 : null);
-
-                    System.out.printf("Adjusted end bigram (%c,%c): -1%n",
-                            (char) endBigram.first.intValue(), (char) endBigram.second.intValue());
-                }
             }
 
             System.out.println("=== Completed Naive Bigram Frequency Computation ===");
