@@ -296,7 +296,7 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("extracted_grammar.txt");
+                        Path grammarFile13 = Path.of("Test_grammar_20_words.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Wrap top-level sequence with sentinels and reduce to a root rule

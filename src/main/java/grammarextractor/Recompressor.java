@@ -208,94 +208,76 @@ public class Recompressor {
         System.out.println("\n=== Completed Non-Repeating Bigram Frequency Computation ===");
         return bigramFreqs;
     }
+
     public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(Parser.ParsedGrammar grammar) {
-        Map<Pair<Integer, Integer>, Integer> repeatingFreqs = new HashMap<>();
+        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
-        Set<String> assignedBlocks = new HashSet<>();
 
-        System.out.println("=== Starting Repeating Bigram Frequency Computation (Safe Mode) ===");
-
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int ruleId = entry.getKey();
-            List<Integer> rhs = entry.getValue();
+        for (int ruleId : rules.keySet()) {
             RuleMetadata meta = metadata.get(ruleId);
-            if (meta == null || rhs.isEmpty()) continue;
+            if (meta == null) continue;
 
             int vocc = meta.getVocc();
-            int ruleLen = meta.getLength();
-            if (vocc == 0 || ruleLen == 0) continue;
+            int len = meta.getLength();
+            if (len < 2) continue;
 
-            List<Integer> middle = new ArrayList<>();
-            int rightSym = -1, rightLen = 0;
-            int leftSym = -1, leftLen = 0;
+            // Step 1: Extract ρ(X'), w(X), λ(X)
+            List<Integer> rhs = rules.get(ruleId);
+            if (rhs == null || rhs.isEmpty()) continue;
+
+            List<Integer> context = new ArrayList<>();
 
             // Right run of the first symbol
             int first = rhs.get(0);
-            if (first >= 256) {
-                RuleMetadata firstMeta = metadata.getOrDefault(first, dummyMeta());
-                if (!firstMeta.isSingleBlock()) {
-                    rightSym = firstMeta.getRightmostTerminal();
-                    rightLen = firstMeta.getRightRunLength();
-                }
-            } else {
-                rightSym = first;
-                rightLen = 1;
+            if (first < 256) context.add(first);
+            else {
+                int rlen = metadata.getOrDefault(first, dummyMeta()).getRightRunLength();
+                int term = metadata.getOrDefault(first, dummyMeta()).getRightmostTerminal();
+                for (int i = 0; i < rlen; i++) context.add(term);
             }
 
-            // Left run of the last symbol
-            int last = rhs.get(rhs.size() - 1);
-            if (last >= 256) {
-                RuleMetadata lastMeta = metadata.getOrDefault(last, dummyMeta());
-                if (!lastMeta.isSingleBlock()) {
-                    leftSym = lastMeta.getLeftmostTerminal();
-                    leftLen = lastMeta.getLeftRunLength();
-                }
-            } else {
-                leftSym = last;
-                leftLen = 1;
-            }
-
-            // Collect middle symbols between first and last
+            // Middle symbols
             for (int i = 1; i < rhs.size() - 1; i++) {
                 int sym = rhs.get(i);
-                if (sym < 256) middle.add(sym);
+                if (sym < 256) context.add(sym);
+                else {
+                    RuleMetadata subMeta = metadata.getOrDefault(sym, dummyMeta());
+                    int subLen = subMeta.getLength();
+                    int subTerm = subMeta.getLeftmostTerminal();
+                    for (int j = 0; j < subLen; j++) context.add(subTerm); // safe assumption
+                }
             }
 
-            // Consider full generated block
-            if (rightSym != -1 && rightSym == leftSym) {
-                int runChar = rightSym;
-                int totalLen = rightLen + middle.size() + leftLen;
-                if (totalLen >= 2) {
-                    int leftContext = (middle.isEmpty() && rightLen > 0) ? -1 : (middle.isEmpty() ? leftSym : middle.get(0));
-                    int rightContext = (middle.isEmpty() && leftLen > 0) ? -1 : (middle.isEmpty() ? rightSym : middle.get(middle.size() - 1));
-                    String runKey = runChar + "|" + totalLen + "|" + leftContext + "|" + rightContext;
-                    if (assignedBlocks.contains(runKey)) {
-                        System.out.printf("⚠ Skipped duplicate run: %s%n", runKey);
-                        continue;
-                    }
+            // Left run of last symbol
+            int last = rhs.get(rhs.size() - 1);
+            if (last < 256) context.add(last);
+            else {
+                int llen = metadata.getOrDefault(last, dummyMeta()).getLeftRunLength();
+                int term = metadata.getOrDefault(last, dummyMeta()).getLeftmostTerminal();
+                for (int i = 0; i < llen; i++) context.add(term);
+            }
 
-                    boolean witness = false;
-                    if (rightLen <= 1 && middle.size() + leftLen + 1 < ruleLen) {
-                        witness = true;
-                    } else if (leftLen <= 1 && middle.size() + rightLen + 1 < ruleLen) {
-                        witness = true;
-                    }
+            // Step 2: Scan for c^d blocks (d ≥ 2)
+            for (int i = 0; i < context.size(); ) {
+                int c = context.get(i);
+                int j = i + 1;
+                while (j < context.size() && context.get(j) == c) j++;
 
-                    if (witness) {
-                        int freq = (totalLen / 2) * vocc;
-                        assignedBlocks.add(runKey);
-                        Pair<Integer, Integer> bigram = Pair.of(runChar, runChar);
-                        repeatingFreqs.merge(bigram, freq, Integer::sum);
-                        System.out.printf("✅ Counted (%c,%c) += %d [run %d × vocc %d] from R%d%n",
-                                (char) runChar, (char) runChar, freq, totalLen, vocc, ruleId);
+                int d = j - i;
+                if (d >= 2) {
+                    // Step 3: Skip if block is prefix/suffix of valSh(X)
+                    boolean isPrefix = (i == 0 && meta.getLeftRunLength() == d);
+                    boolean isSuffix = (j == context.size() && meta.getRightRunLength() == d);
+                    if (!isPrefix && !isSuffix) {
+                        freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
                     }
                 }
+                i = j;
             }
         }
 
-        System.out.println("=== Completed Repeating Bigram Frequency Computation ===");
-        return repeatingFreqs;
+        return freqMap;
     }
 
 
