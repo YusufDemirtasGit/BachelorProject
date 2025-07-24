@@ -2,8 +2,10 @@ package grammarextractor;
 
 import java.io.IOException;
 import java.io.Writer;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class Decompressor {
 
@@ -11,7 +13,7 @@ public class Decompressor {
         StringBuilder output = new StringBuilder();
 
         for (int symbol : parsedGrammar.sequence()) {
-            expand(symbol, parsedGrammar.grammarRules(), parsedGrammar.metadata(), output);
+            expand(symbol, parsedGrammar.grammarRules(), parsedGrammar.metadata(), output, new HashSet<>());
         }
 
         return output.toString();
@@ -20,11 +22,16 @@ public class Decompressor {
     private static void expand(int symbol,
                                Map<Integer, List<Integer>> grammar,
                                Map<Integer, RuleMetadata> metadata,
-                               StringBuilder output) {
+                               StringBuilder output,
+                               Set<Integer> stack) {
 
         if (symbol < 256) {
             output.append((char) symbol);
             return;
+        }
+
+        if (!stack.add(symbol)) {
+            throw new IllegalStateException("Cycle detected in grammar at rule R" + symbol);
         }
 
         List<Integer> rhs = grammar.get(symbol);
@@ -33,20 +40,12 @@ public class Decompressor {
         }
 
         for (int sub : rhs) {
-            expand(sub, grammar, metadata, output);
-        }
-    }
-
-    public static void decompressToWriter(Parser.ParsedGrammar parsedGrammar, Writer writer) throws IOException {
-        Map<Integer, List<Integer>> grammar = parsedGrammar.grammarRules();
-        Map<Integer, RuleMetadata> metadata = parsedGrammar.metadata();
-
-        for (int symbol : parsedGrammar.sequence()) {
-            expandToWriter(symbol, grammar, metadata, writer);
+            expand(sub, grammar, metadata, output, stack);
         }
 
-        writer.flush();
+        stack.remove(symbol);
     }
+
 
     private static void expandToWriter(int symbol,
                                        Map<Integer, List<Integer>> grammar,

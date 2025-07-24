@@ -304,7 +304,7 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("Test_from_paper.txt");
+                        Path grammarFile13 = Path.of("Example.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Step 1: Wrap with sentinels and create binary grammar
@@ -379,9 +379,9 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_from_paper.txt");
+                        Path grammarFile17 = Path.of("LoremIpsum.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 1);
+                        Recompressor.recompressNTimes(original17, 100000,false);
 
                         break;
 
