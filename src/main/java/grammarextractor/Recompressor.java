@@ -12,6 +12,7 @@ public class Recompressor {
 
 
     public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose) {
+        int counter = 0;
         // Step 1: Initialize grammar with sentinels and metadata
         InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
         Parser.ParsedGrammar initialized = init.grammar;
@@ -34,6 +35,7 @@ public class Recompressor {
         }
 
         for (int pass = 1; pass <= maxPasses; pass++) {
+            counter+=1;
             if (verbose) {
                 System.out.printf("\n=== 🔁 Recompression Pass %d ===\n", pass);
             }
@@ -93,7 +95,7 @@ public class Recompressor {
                 if(verbose)System.out.println("\n=== 🔁 Roundtrip Check ===");
             }
             if (before.equals(after)) {
-                if (verbose) System.out.println("✔ Roundtrip OK.");
+                 System.out.println("✔ Roundtrip OK.");
             } else {
                 if(verbose)System.err.println("❌ Roundtrip mismatch detected!");
                 int mismatch = -1;
@@ -114,10 +116,27 @@ public class Recompressor {
                     if(verbose)System.out.println("\n📦 Current Grammar State:");
                     Parser.printGrammar(workingGrammar);
                 }
+
                 break;
             }
 
             before = after;
+        }
+        System.out.println("\n=== Rule Metadata ===");
+        for (Map.Entry<Integer, RuleMetadata> entry : workingGrammar.metadata().entrySet()) {
+            int ruleId = entry.getKey();
+            RuleMetadata meta = entry.getValue();
+            System.out.printf(
+                    "R%d: vocc=%d, length=%d, leftmost=%s, rightmost=%s, singleBlock=%s, leftRun=%d, rightRun=%d%n",
+                    ruleId,
+                    meta.getVocc(),
+                    meta.getLength(),
+                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
+                    meta.isSingleBlock(),
+                    meta.getLeftRunLength(),
+                    meta.getRightRunLength()
+            );
         }
 
         int totalRules = rules.size();
@@ -161,6 +180,7 @@ public class Recompressor {
         } catch (IOException e) {
             if(verbose)System.err.println("❌ Failed to write output.txt: " + e.getMessage());
         }
+        System.out.println(counter + "roundtrips required");
     }
 
 
