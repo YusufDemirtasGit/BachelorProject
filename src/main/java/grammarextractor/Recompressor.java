@@ -6,452 +6,244 @@ import static grammarextractor.Main.formatSymbol;
 import static grammarextractor.RuleMetadata.computeAll;
 
 public class Recompressor {
-    public static void recompress(Parser.ParsedGrammar originalGrammar,
-                                  Parser.ParsedGrammar initializedGrammar) {
-
-        Map<Integer, List<Integer>> rules = initializedGrammar.grammarRules();
-        Map<Integer, RuleMetadata> metadata = initializedGrammar.metadata();
-        List<Integer> sequence = initializedGrammar.sequence();
-
-        // Step 1: Determine the max rule ID from the original grammar
-        int maxRuleId = originalGrammar.grammarRules().keySet().stream()
-                .max(Integer::compareTo)
-                .orElse(255); // Assume terminal < 256
-
-        int nextRuleId = maxRuleId + 1;
-
-        // Step 2: Recompression loop
-//        while (true) {
-            // Get most frequent bigram (non-repeating or repeating)
-            Pair<Integer, Integer> bigram = getMostFrequentBigram(
-                    computeBigramFrequencies(originalGrammar, initializedGrammar));
-
-            if (bigram == null); // No more compressible bigrams
-
-            int c1 = bigram.first;
-            int c2 = bigram.second;
-            int newRuleId = nextRuleId++;
-
-            System.out.printf("🔁 Replacing bigram (%s, %s) → R%d%n",
-                    formatSymbol(c1), formatSymbol(c2), newRuleId);
-
-            // Step 3: Uncross the bigram using PopInLet and PopOutLet
-            popInlet(c1, c2, rules, metadata);
-            popOutLet(c1, c2, rules, metadata);
-
-            // Step 4: Replace all (c1, c2) occurrences in-place with new rule ID
-            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-                List<Integer> rhs = entry.getValue();
-                List<Integer> updated = new ArrayList<>();
-
-                for (int i = 0; i < rhs.size(); ) {
-                    if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
-                        updated.add(newRuleId);
-                        i += 2;
-                    } else {
-                        updated.add(rhs.get(i));
-                        i++;
-                    }
-                }
-
-                entry.setValue(updated);
-            }
-
-            // Step 5: Add new rule RnewRuleId → c1 c2
-            rules.put(newRuleId, List.of(c1, c2));
-
-            // Step 6: Recompute metadata for new rule
-            RuleMetadata newMeta = computeAll(new Parser.ParsedGrammar(rules, sequence, metadata)).get(newRuleId);
-            metadata.put(newRuleId, newMeta);
+//    public static void recompress(Parser.ParsedGrammar originalGrammar,
+//                                  Parser.ParsedGrammar initializedGrammar) {
+//
+//        Map<Integer, List<Integer>> rules = initializedGrammar.grammarRules();
+//        Map<Integer, RuleMetadata> metadata = initializedGrammar.metadata();
+//        List<Integer> sequence = initializedGrammar.sequence();
+//
+//        // Step 1: Determine max rule ID from original grammar
+//        int maxRuleId = originalGrammar.grammarRules().keySet().stream()
+//                .max(Integer::compareTo).orElse(255); // terminals < 256
+//        int nextRuleId = maxRuleId + 1;
+//
+//        Set<Integer> artificialTerminals = new HashSet<>();
+//        Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
+//
+//        // Step 2: Find most frequent bigram using updated logic
+//        Map<Pair<Integer, Integer>, Integer> frequencies = computeBigramFrequencies(workingGrammar, artificialTerminals);
+//        Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies);
+//
+//        if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
+//            System.out.println("❌ No compressible bigrams found.");
+//            return;
 //        }
+//
+//        int c1 = bigram.first;
+//        int c2 = bigram.second;
+//        int newRuleId = nextRuleId++;
+//        artificialTerminals.add(newRuleId); // Treat Rnew as atomic from now on
+//
+//        System.out.printf("🔁 Replacing bigram (%s, %s) → R%d%n",
+//                formatSymbol(c1), formatSymbol(c2), newRuleId);
+//
+//        // Step 3: Uncross
+//        popInlet(c1, c2, rules, metadata);
+//        popOutLet(c1, c2, rules, metadata);
+//
+//        // Step 4: Replace all (c1, c2) with newRuleId
+//        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+//            List<Integer> rhs = entry.getValue();
+//            List<Integer> updated = new ArrayList<>();
+//
+//            for (int i = 0; i < rhs.size(); ) {
+//                if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
+//                    updated.add(newRuleId);
+//                    i += 2;
+//                } else {
+//                    updated.add(rhs.get(i));
+//                    i++;
+//                }
+//            }
+//
+//            entry.setValue(updated);
+//        }
+//
+//        // Step 5: Add RnewRule → c1 c2
+//        rules.put(newRuleId, List.of(c1, c2));
+//
+//        // Step 6: Recompute metadata
+//        metadata = computeAll(new Parser.ParsedGrammar(rules, sequence, metadata));
+//        RuleMetadata newMeta = metadata.get(newRuleId);
+//        workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
+//
+//        System.out.printf("🧠 Metadata for R%d → vocc=%d, length=%d, left=%s, right=%s, isSB=%b, runL=%d, runR=%d%n",
+//                newRuleId, newMeta.getVocc(), newMeta.getLength(),
+//                formatSymbol(newMeta.getLeftmostTerminal()), formatSymbol(newMeta.getRightmostTerminal()),
+//                newMeta.isSingleBlock(), newMeta.getLeftRunLength(), newMeta.getRightRunLength());
+//
+//        // Final Output
+//        System.out.println("\n🎉 One-step recompression completed.");
+//        System.out.println("\n=== 📦 Final Grammar After Recompression ===");
+//        Parser.printGrammar(workingGrammar);
+//    }
 
-        System.out.println("\n🎉 Full recompression completed.");
+    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses) {
+        // Step 1: Initialize grammar with sentinels and metadata
+        InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
+        Parser.ParsedGrammar initialized = init.grammar;
+        Set<Integer> artificialTerminals = init.artificialTerminals;
 
-        // Print final grammar after all replacements
-        System.out.println("\n=== 📦 Final Grammar After Full Recompression ===");
-        Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-    }
-    public static void recompressOnceVerbose(Parser.ParsedGrammar originalGrammar) {
-        // Step 1: Initialize with sentinels + binary rules
-        Parser.ParsedGrammar initialized = initializeWithSentinelsAndRootRule(originalGrammar);
-
-        // Step 2: Compute initial metadata
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(initialized);
+        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(initialized, artificialTerminals);
         Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(
-                initialized.grammarRules(), initialized.sequence(), metadata
+                initialized.grammarRules(),
+                initialized.sequence(),
+                metadata
         );
 
         Map<Integer, List<Integer>> rules = workingGrammar.grammarRules();
         List<Integer> sequence = workingGrammar.sequence();
 
-        // Decompress before
         String before = Decompressor.decompress(workingGrammar);
-        System.out.println("\n=== ⏮ Decompressed Output BEFORE Recompression ===");
-        System.out.println(before);
+        System.out.println("=== 🧵 Decompressed BEFORE All Passes ===\n" + before);
 
-        // Compute bigram frequencies and select best
-        System.out.println("\n=== 🔍 Computing Bigram Frequencies ===");
-        Map<Pair<Integer, Integer>, Integer> frequencies =
-                computeBigramFrequencies(originalGrammar, workingGrammar);
+        for (int pass = 1; pass <= maxPasses; pass++) {
+            System.out.printf("\n=== 🔁 Recompression Pass %d ===\n", pass);
 
-        Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies);
-        if (bigram == null) {
-            System.out.println("❌ No compressible bigrams found.");
-            return;
-        }
-
-        int c1 = bigram.first;
-        int c2 = bigram.second;
-
-        int maxRuleId = rules.keySet().stream().max(Integer::compareTo).orElse(255);
-        int newRuleId = maxRuleId + 1;
-
-        System.out.printf("✅ Most frequent bigram: (%s, %s) → R%d [%d occurrences]%n",
-                formatSymbol(c1), formatSymbol(c2), newRuleId, frequencies.get(bigram));
-
-        // Show grammar before uncrossing
-        System.out.println("\n--- 📄 Grammar BEFORE Uncrossing ---");
-        Parser.printGrammar(workingGrammar);
-
-        // Uncrossing: popIn and popOut
-        System.out.println("\n=== 🔧 Applying PopInLet ===");
-        popInlet(c1, c2, rules, metadata);
-        System.out.println("=== 🔧 Applying PopOutLet ===");
-        popOutLet(c1, c2, rules, metadata);
-
-        System.out.println("\n--- 📄 Grammar AFTER Uncrossing ---");
-        Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-
-        // Replace bigram with new rule
-        System.out.println("\n=== ✏ Replacing Bigram with New Rule ===");
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int ruleId = entry.getKey();
-            List<Integer> rhs = entry.getValue();
-            List<Integer> updated = new ArrayList<>();
-
-            for (int i = 0; i < rhs.size(); ) {
-                if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
-                    updated.add(newRuleId);
-                    System.out.printf("📌 Rule R%d: replacing (%s, %s) → R%d%n",
-                            ruleId, formatSymbol(c1), formatSymbol(c2), newRuleId);
-                    i += 2;
-                } else {
-                    updated.add(rhs.get(i));
-                    i++;
-                }
-            }
-
-            entry.setValue(updated);
-        }
-
-        rules.put(newRuleId, List.of(c1, c2));
-        metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, metadata));
-        workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
-
-        RuleMetadata newMeta = metadata.get(newRuleId);
-        System.out.printf("🧠 Metadata for R%d → vocc=%d, length=%d, left=%s, right=%s, isSB=%b, runL=%d, runR=%d%n",
-                newRuleId, newMeta.getVocc(), newMeta.getLength(),
-                formatSymbol(newMeta.getLeftmostTerminal()), formatSymbol(newMeta.getRightmostTerminal()),
-                newMeta.isSingleBlock(), newMeta.getLeftRunLength(), newMeta.getRightRunLength());
-
-        // Decompress after
-        String after = Decompressor.decompress(workingGrammar);
-        System.out.println("\n=== ⏭ Decompressed Output AFTER Recompression ===");
-        System.out.println(after);
-
-        // Check roundtrip
-        System.out.println("\n=== ✅ Roundtrip Check ===");
-        if (before.equals(after)) {
-            System.out.println("✔ Grammar still produces the same output (roundtrip OK).");
-        } else {
-            System.err.println("❌ Output changed after recompression!");
-            int mismatch = -1;
-            for (int i = 0; i < Math.min(before.length(), after.length()); i++) {
-                if (before.charAt(i) != after.charAt(i)) {
-                    mismatch = i;
-                    break;
-                }
-            }
-            if (mismatch >= 0) {
-                System.out.printf("🔍 First mismatch at index %d: '%c' vs '%c'%n",
-                        mismatch, before.charAt(mismatch), after.charAt(mismatch));
-            }
-        }
-
-        System.out.println("\n=== 📦 Final Grammar After This Recompression ===");
-        Parser.printGrammar(workingGrammar);
-    }
-    public static void recompressTwiceVerbose(Parser.ParsedGrammar originalGrammar) {
-        // Step 1: Initialize grammar
-        Parser.ParsedGrammar initialized = initializeWithSentinelsAndRootRule(originalGrammar);
-        Map<Integer, List<Integer>> rules = initialized.grammarRules();
-        List<Integer> sequence = initialized.sequence();
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(initialized);
-
-        Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
-
-        // Track already-compressed bigrams → ruleID
-        Map<Pair<Integer, Integer>, Integer> seenBigrams = new HashMap<>();
-        int nextFreeRuleId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
-
-        for (int pass = 1; pass <= 2; pass++) {
-            System.out.printf("\n\n=== 🔁 Recompression Pass %d ===\n", pass);
-
-            String before = Decompressor.decompress(workingGrammar);
-            System.out.printf("\n⏮ Decompressed Output BEFORE Pass %d:\n%s\n", pass, before);
-
-            // Compute bigram frequencies
+            // Compute frequencies with artificial terminals
             Map<Pair<Integer, Integer>, Integer> frequencies =
-                    computeBigramFrequencies(workingGrammar, workingGrammar);
-
-            System.out.println("\n--- 📊 Bigram Frequencies ---");
-            frequencies.entrySet().stream()
-                    .sorted((e1, e2) -> Integer.compare(e2.getValue(), e1.getValue()))
-                    .forEach(entry -> {
-                        Pair<Integer, Integer> bigram = entry.getKey();
-                        int freq = entry.getValue();
-                        System.out.printf("(%s, %s) → %d%n",
-                                formatSymbol(bigram.first), formatSymbol(bigram.second), freq);
-                    });
-
-            // Select most frequent unseen bigram
-            Pair<Integer, Integer> bigram = frequencies.entrySet().stream()
-                    .filter(entry -> !seenBigrams.containsKey(entry.getKey()))
-                    .max(Map.Entry.comparingByValue())
-                    .map(Map.Entry::getKey)
-                    .orElse(null);
-
-            if (bigram == null) {
-                System.out.println("❌ No new compressible bigrams found.");
-                break;
-            }
-
-            int c1 = bigram.first;
-            int c2 = bigram.second;
-
-            // Use existing rule ID or assign new one
-            int newRuleId = seenBigrams.getOrDefault(bigram, nextFreeRuleId++);
-            seenBigrams.put(bigram, newRuleId);
-
-            System.out.printf("✅ Most frequent bigram: (%s, %s) → R%d [%d occurrences]\n",
-                    formatSymbol(c1), formatSymbol(c2), newRuleId, frequencies.get(bigram));
-
-            System.out.printf("\n--- 📄 Grammar BEFORE Uncrossing (Pass %d) ---\n", pass);
-            Parser.printGrammar(workingGrammar);
-
-            // Uncross
-            System.out.println("\n=== 🔧 Applying PopInLet ===");
-            popInlet(c1, c2, rules, metadata);
-            System.out.println("=== 🔧 Applying PopOutLet ===");
-            popOutLet(c1, c2, rules, metadata);
-
-            System.out.printf("\n--- 📄 Grammar AFTER Uncrossing (Pass %d) ---\n", pass);
-            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-
-            // Replace bigram with ruleID
-            System.out.printf("\n=== ✏ Replacing Bigram (%s, %s) with R%d ===\n",
-                    formatSymbol(c1), formatSymbol(c2), newRuleId);
-            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-                int ruleId = entry.getKey();
-                List<Integer> rhs = entry.getValue();
-                List<Integer> updated = new ArrayList<>();
-
-                for (int i = 0; i < rhs.size(); ) {
-                    if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
-                        updated.add(newRuleId);
-                        System.out.printf("📌 Rule R%d: replacing (%s, %s) → R%d\n",
-                                ruleId, formatSymbol(c1), formatSymbol(c2), newRuleId);
-                        i += 2;
-                    } else {
-                        updated.add(rhs.get(i));
-                        i++;
-                    }
-                }
-
-                entry.setValue(updated);
-            }
-
-            // Only add rule if it's newly assigned
-            rules.putIfAbsent(newRuleId, List.of(c1, c2));
-
-            // Refresh grammar
-            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, metadata));
-            workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
-
-            // Print metadata
-            RuleMetadata newMeta = metadata.get(newRuleId);
-            System.out.printf("🧠 Metadata for R%d → vocc=%d, length=%d, left=%s, right=%s, isSB=%b, runL=%d, runR=%d\n",
-                    newRuleId, newMeta.getVocc(), newMeta.getLength(),
-                    formatSymbol(newMeta.getLeftmostTerminal()), formatSymbol(newMeta.getRightmostTerminal()),
-                    newMeta.isSingleBlock(), newMeta.getLeftRunLength(), newMeta.getRightRunLength());
-
-            // Decompress and check roundtrip
-            String after = Decompressor.decompress(workingGrammar);
-            System.out.printf("\n⏭ Decompressed Output AFTER Pass %d:\n%s\n", pass, after);
-
-            System.out.printf("\n=== ✅ Roundtrip Check for Pass %d ===\n", pass);
-            if (before.equals(after)) {
-                System.out.println("✔ Grammar still produces the same output (roundtrip OK).");
-            } else {
-                System.err.println("❌ Output changed after recompression!");
-                for (int i = 0; i < Math.min(before.length(), after.length()); i++) {
-                    if (before.charAt(i) != after.charAt(i)) {
-                        System.out.printf("🔍 Mismatch at %d: '%c' vs '%c'\n", i, before.charAt(i), after.charAt(i));
-                        break;
-                    }
-                }
-            }
-
-            System.out.printf("\n📦 Final Grammar After Pass %d:\n", pass);
-            Parser.printGrammar(workingGrammar);
-        }
-    }
-
-
-    public static void recompressUntilDoneVerbose(Parser.ParsedGrammar originalGrammar) {
-        // Step 1: Initialize with sentinels + binary rules
-        Parser.ParsedGrammar working = initializeWithSentinelsAndRootRule(originalGrammar);
-
-        // Step 2: Compute metadata
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(working);
-        List<Integer> sequence = working.sequence();
-        Map<Integer, List<Integer>> rules = working.grammarRules();
-
-        int round = 1;
-        int nextRuleId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
-
-        while (true) {
-            System.out.printf("\n\n======= 🔄 ROUND %d =======\n", round);
-
-            // Recompute metadata for this round
-            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, metadata));
-            working = new Parser.ParsedGrammar(rules, sequence, metadata);
-
-            // Decompress before
-            String before = Decompressor.decompress(working);
-            System.out.println("\n⏮ Decompressed BEFORE:");
-            System.out.println(before);
-
-            // Find best bigram
-            Map<Pair<Integer, Integer>, Integer> frequencies =
-                    computeBigramFrequencies(originalGrammar, working);
-            System.out.println("\n--- 📊 Bigram Frequencies ---");
-            frequencies.entrySet().stream()
-                    .sorted((e1, e2) -> Integer.compare(e2.getValue(), e1.getValue())) // descending order
-                    .forEach(entry -> {
-                        Pair<Integer, Integer> bigram = entry.getKey();
-                        int freq = entry.getValue();
-                        System.out.printf("(%s, %s) → %d%n",
-                                formatSymbol(bigram.first), formatSymbol(bigram.second), freq);
-                    });
+                    computeBigramFrequencies(workingGrammar, artificialTerminals);
 
             Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies);
             if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
-                System.out.println("\n✅ No compressible bigrams with frequency > 1. Stopping.");
+                System.out.println("✅ No more compressible bigrams.");
                 break;
             }
 
             int c1 = bigram.first;
             int c2 = bigram.second;
-            int newRuleId = nextRuleId++;
+            int maxRuleId = rules.keySet().stream().max(Integer::compareTo).orElse(255);
+            int newRuleId = maxRuleId + 1;
 
-            System.out.printf("🔍 Most frequent bigram: (%s, %s) → R%d [%d occurrences]%n",
+            System.out.printf("📌 Most frequent bigram: (%s, %s) → R%d [%d occurrences]%n",
                     formatSymbol(c1), formatSymbol(c2), newRuleId, frequencies.get(bigram));
 
-            System.out.println("\n📄 Grammar BEFORE Uncrossing:");
-            Parser.printGrammar(working);
+            // Uncross before replacing - pass artificial terminals
+            popInlet(c1, c2, rules, metadata, artificialTerminals);
+            popOutLet(c1, c2, rules, metadata, artificialTerminals);
 
-            // Uncross the bigram
-            System.out.println("\n🔧 Applying PopInLet");
-            popInlet(c1, c2, rules, metadata);
-            System.out.println("🔧 Applying PopOutLet");
-            popOutLet(c1, c2, rules, metadata);
+            // Replace bigram - skip artificial terminals
+            replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
 
-            System.out.println("\n📄 Grammar AFTER Uncrossing:");
-            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
+            // Register new rule
+            rules.put(newRuleId, List.of(c1, c2));
 
-            // Replace (c1, c2) with Rnew
-            int replacements = 0;
-            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-                int ruleId = entry.getKey();
-                List<Integer> rhs = entry.getValue();
-                List<Integer> updated = new ArrayList<>();
+            // IMPORTANT: Mark the new rule as artificial terminal
+            artificialTerminals.add(newRuleId);
+            System.out.printf("🔒 Marked R%d as artificial terminal\n", newRuleId);
 
-                for (int i = 0; i < rhs.size(); ) {
-                    if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
-                        updated.add(newRuleId);
-                        replacements++;
-                        System.out.printf("📌 Rule R%d: replacing (%s,%s) → R%d%n",
-                                ruleId, formatSymbol(c1), formatSymbol(c2), newRuleId);
-                        i += 2;
-                    } else {
-                        updated.add(rhs.get(i));
-                        i++;
+            // Recompute metadata with updated artificial terminals
+            metadata = RuleMetadata.computeAll(
+                    new Parser.ParsedGrammar(rules, sequence, metadata),
+                    artificialTerminals
+            );
+            workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
+
+            // Print metadata for the new rule
+            RuleMetadata newMeta = metadata.get(newRuleId);
+            if (newMeta != null) {
+                System.out.printf("🧠 Metadata for R%d → vocc=%d, length=%d, left=%s, right=%s, isSB=%b, runL=%d, runR=%d%n",
+                        newRuleId, newMeta.getVocc(), newMeta.getLength(),
+                        formatSymbol(newMeta.getLeftmostTerminal()),
+                        formatSymbol(newMeta.getRightmostTerminal()),
+                        newMeta.isSingleBlock(),
+                        newMeta.getLeftRunLength(),
+                        newMeta.getRightRunLength());
+            }
+
+            // Roundtrip check
+            String after = Decompressor.decompress(workingGrammar);
+            System.out.println("\n=== 🔁 Roundtrip Check ===");
+            if (before.equals(after)) {
+                System.out.println("✔ Roundtrip OK.");
+            } else {
+                System.err.println("❌ Roundtrip mismatch detected!");
+                // Find first mismatch
+                int mismatch = -1;
+                for (int i = 0; i < Math.min(before.length(), after.length()); i++) {
+                    if (before.charAt(i) != after.charAt(i)) {
+                        mismatch = i;
+                        break;
                     }
                 }
+                if (mismatch >= 0) {
+                    System.out.printf("🔍 First mismatch at index %d: '%c' vs '%c'%n",
+                            mismatch, before.charAt(mismatch), after.charAt(mismatch));
+                } else if (before.length() != after.length()) {
+                    System.out.printf("🔍 Length mismatch: %d vs %d%n",
+                            before.length(), after.length());
+                }
 
-                entry.setValue(updated);
+                // Debug: print the grammar
+                System.out.println("\n📦 Current Grammar State:");
+                Parser.printGrammar(workingGrammar);
+                break; // Stop on error
             }
 
-            rules.put(newRuleId, List.of(c1, c2));
-            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, metadata));
-            RuleMetadata newMeta = metadata.get(newRuleId);
-
-            System.out.printf("🧠 Metadata for R%d → vocc=%d, length=%d, left=%s, right=%s, isSB=%b, runL=%d, runR=%d%n",
-                    newRuleId, newMeta.getVocc(), newMeta.getLength(),
-                    formatSymbol(newMeta.getLeftmostTerminal()), formatSymbol(newMeta.getRightmostTerminal()),
-                    newMeta.isSingleBlock(), newMeta.getLeftRunLength(), newMeta.getRightRunLength());
-
-            // Decompress after
-            String after = Decompressor.decompress(new Parser.ParsedGrammar(rules, sequence, metadata));
-            System.out.println("\n⏭ Decompressed AFTER:");
-            System.out.println(after);
-
-            if (before.equals(after)) {
-                System.out.println("✅ Roundtrip OK (output unchanged)");
-            } else {
-                System.err.println("❌ Output changed!");
-            }
-
-            round++;
+            before = after; // for next pass comparison
         }
 
-        System.out.println("\n🎉 Full recompression completed.");
+        System.out.println("\n=== 📦 Final Grammar After " + maxPasses + " Passes ===");
+        Parser.printGrammar(workingGrammar);
+        System.out.println("\n=== Rule Metadata ===");
+        for (Map.Entry<Integer, RuleMetadata> entry : workingGrammar.metadata().entrySet()) {
+            int ruleId = entry.getKey();
+            RuleMetadata meta = entry.getValue();
+            System.out.printf(
+                    "R%d: vocc=%d, length=%d, leftmost=%s, rightmost=%s, singleBlock=%s, leftRun=%d, rightRun=%d%n",
+                    ruleId,
+                    meta.getVocc(),
+                    meta.getLength(),
+                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
+                    meta.isSingleBlock(),
+                    meta.getLeftRunLength(),
+                    meta.getRightRunLength()
+            );
+        }
     }
 
+
     public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
-            Parser.ParsedGrammar original,
-            Parser.ParsedGrammar initializedWithMetadata
+            Parser.ParsedGrammar working,
+            Set<Integer> artificialTerminals
     ) {
-        // Step 1: Compute both frequency types
-        Map<Pair<Integer, Integer>, Integer> repeatingFreqs =
-                computeRepeatingFrequencies(initializedWithMetadata);
+        Map<Pair<Integer, Integer>, Integer> repFreqs =
+                computeRepeatingFrequencies(working, artificialTerminals);
+        Map<Pair<Integer, Integer>, Integer> nonRepFreqs =
+                computeNonRepeatingFrequencies(working, artificialTerminals);
 
-        Map<Pair<Integer, Integer>, Integer> nonRepeatingFreqs =
-                computeNonRepeatingFrequencies(initializedWithMetadata);
-
-        // Step 2: Merge them
-        Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRepeatingFreqs);
-        for (Map.Entry<Pair<Integer, Integer>, Integer> entry : repeatingFreqs.entrySet()) {
-            merged.merge(entry.getKey(), entry.getValue(), Integer::sum);
+        Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRepFreqs);
+        for (Map.Entry<Pair<Integer, Integer>, Integer> e : repFreqs.entrySet()) {
+            merged.merge(e.getKey(), e.getValue(), Integer::sum);
         }
-
         return merged;
     }
 
 
-    public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(Parser.ParsedGrammar grammar) {
+    public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(
+            Parser.ParsedGrammar grammar,
+            Set<Integer> artificialTerminals
+    ) {
         Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
+
         if (grammar.sequence().size() != 1 || grammar.sequence().get(0) < 256) {
-            throw new IllegalStateException("Grammar sequence must be a single root nonterminal (use initializeWithSentinelsAndRootRule)");
+            throw new IllegalStateException("Grammar sequence must be a single root nonterminal");
         }
 
         System.out.println("=== Starting Non-Repeating Bigram Frequency Computation ===");
 
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int ruleId = entry.getKey();
+
+            if (artificialTerminals.contains(ruleId)) {
+                System.out.printf("Skipping rule R%d (treated as artificial terminal)%n", ruleId);
+                continue;
+            }
+
             List<Integer> rhs = entry.getValue();
             RuleMetadata meta = metadata.get(ruleId);
             if (meta == null || rhs.isEmpty()) {
@@ -463,22 +255,26 @@ public class Recompressor {
             System.out.println("RHS: " + rhs);
             int vocc = meta.getVocc();
             System.out.println("Virtual Occurrence Count (vocc): " + vocc);
+
             List<Integer> window = new ArrayList<>();
 
-            // === 1. Add rightmost terminal of first symbol
+            // Process first symbol
             int firstSymbol = rhs.get(0);
-            if (firstSymbol >= 256) {
-                RuleMetadata firstMeta = metadata.getOrDefault(firstSymbol, dummyMeta());
-                int rightmost = firstMeta.getRightmostTerminal();
-                System.out.printf("Rightmost terminal of first symbol R%d: %s%n", firstSymbol,
-                        rightmost >= 0 ? rightmost : "None");
-                if (rightmost >= 0) {
-                    window.add(rightmost);
+            if (firstSymbol < 256) {
+                // It's a terminal
+                window.add(firstSymbol);
+            } else if (artificialTerminals.contains(firstSymbol)) {
+                // It's an artificial terminal - add it as-is
+                window.add(firstSymbol);
+            } else {
+                // It's a regular non-terminal - get its rightmost terminal
+                RuleMetadata firstMeta = metadata.get(firstSymbol);
+                if (firstMeta != null && firstMeta.getRightmostTerminal() >= 0) {
+                    window.add(firstMeta.getRightmostTerminal());
                 }
             }
-            else window.add(firstSymbol);
 
-            // === 2. Add middle symbols
+            // Process middle symbols
             if (rhs.size() > 2) {
                 System.out.print("Middle symbols (w(X)): ");
                 for (int i = 1; i < rhs.size() - 1; i++) {
@@ -489,35 +285,41 @@ public class Recompressor {
                 System.out.println();
             }
 
-            // === 3. Add leftmost terminal of last symbol
-            int lastSymbol = rhs.get(rhs.size() - 1);
-            if (lastSymbol >= 256) {
-                RuleMetadata lastMeta = metadata.getOrDefault(lastSymbol, dummyMeta());
-                int leftmost = lastMeta.getLeftmostTerminal();
-                System.out.printf("Leftmost terminal of last symbol R%d: %s%n", lastSymbol,
-                        leftmost >= 0 ? leftmost : "None");
-                if (leftmost >= 0) {
-                    window.add(leftmost);
-                }
-            }
-            else window.add(lastSymbol);
-
-            // === 4. Count terminal-terminal bigrams in the window
-            System.out.println("Built window: " + window);
-            for (int i = 0; i < window.size()-1; i++) {
-                int a = window.get(i);
-                int b = window.get(i + 1);
-                if (a < 256 && b < 256 && a != b) {
-                    Pair<Integer, Integer> bigram = Pair.of(a, b);
-                    bigramFreqs.merge(bigram, vocc, Integer::sum);
-                    System.out.printf("Added bigram (%c,%c) with count += %d%n", a, b, vocc);
+            // Process last symbol (if different from first)
+            if (rhs.size() > 1) {
+                int lastSymbol = rhs.get(rhs.size() - 1);
+                if (lastSymbol < 256) {
+                    // It's a terminal
+                    window.add(lastSymbol);
+                } else if (artificialTerminals.contains(lastSymbol)) {
+                    // It's an artificial terminal - add it as-is
+                    window.add(lastSymbol);
                 } else {
-                    if (a >= 256 || b >= 256) {
-                        System.out.printf("Skipping non-terminal bigram (%d,%d)%n", a, b);
-                    } else if (a == b) {
-                        System.out.printf("Skipping repeating bigram (%c,%c)%n", a, b);
+                    // It's a regular non-terminal - get its leftmost terminal
+                    RuleMetadata lastMeta = metadata.get(lastSymbol);
+                    if (lastMeta != null && lastMeta.getLeftmostTerminal() >= 0) {
+                        window.add(lastMeta.getLeftmostTerminal());
                     }
                 }
+            }
+
+            // Count all bigrams in the window
+            System.out.println("Built window: " + window);
+            for (int i = 0; i < window.size() - 1; i++) {
+                int a = window.get(i);
+                int b = window.get(i + 1);
+
+                // Skip repeating bigrams (they're handled separately)
+                if (a == b) {
+                    System.out.printf("Skipping repeating bigram (%s,%s)%n",
+                            formatSymbol(a), formatSymbol(b));
+                    continue;
+                }
+
+                Pair<Integer, Integer> bigram = Pair.of(a, b);
+                bigramFreqs.merge(bigram, vocc, Integer::sum);
+                System.out.printf("Added bigram (%s,%s) with count += %d%n",
+                        formatSymbol(a), formatSymbol(b), vocc);
             }
         }
 
@@ -525,12 +327,23 @@ public class Recompressor {
         return bigramFreqs;
     }
 
-    public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(Parser.ParsedGrammar grammar) {
+
+    public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
+            Parser.ParsedGrammar grammar,
+            Set<Integer> artificialTerminals
+    ) {
         Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
 
+        System.out.println("=== Starting Repeating Bigram Frequency Computation ===");
+
         for (int ruleId : rules.keySet()) {
+            if (artificialTerminals.contains(ruleId)) {
+                System.out.printf("Skipping rule R%d (artificial terminal)%n", ruleId);
+                continue;
+            }
+
             RuleMetadata meta = metadata.get(ruleId);
             if (meta == null) continue;
 
@@ -538,43 +351,54 @@ public class Recompressor {
             int len = meta.getLength();
             if (len < 2) continue;
 
-            // Step 1: Extract ρ(X'), w(X), λ(X)
             List<Integer> rhs = rules.get(ruleId);
             if (rhs == null || rhs.isEmpty()) continue;
 
             List<Integer> context = new ArrayList<>();
 
-            // Right run of the first symbol
-            int first = rhs.get(0);
-            if (first < 256) context.add(first);
-            else {
-                int rlen = metadata.getOrDefault(first, dummyMeta()).getRightRunLength();
-                int term = metadata.getOrDefault(first, dummyMeta()).getRightmostTerminal();
-                for (int i = 0; i < rlen; i++) context.add(term);
-            }
-
-            // Middle symbols
-            for (int i = 1; i < rhs.size() - 1; i++) {
+            // Build context considering artificial terminals
+            for (int i = 0; i < rhs.size(); i++) {
                 int sym = rhs.get(i);
-                if (sym < 256) context.add(sym);
-                else {
-                    RuleMetadata subMeta = metadata.getOrDefault(sym, dummyMeta());
-                    int subLen = subMeta.getLength();
-                    int subTerm = subMeta.getLeftmostTerminal();
-                    for (int j = 0; j < subLen; j++) context.add(subTerm); // safe assumption
+
+                if (sym < 256) {
+                    // Terminal - add directly
+                    context.add(sym);
+                } else if (artificialTerminals.contains(sym)) {
+                    // Artificial terminal - add as atomic
+                    context.add(sym);
+                } else {
+                    // Regular non-terminal - expand based on position
+                    RuleMetadata subMeta = metadata.get(sym);
+                    if (subMeta == null) continue;
+
+                    if (i == 0) {
+                        // First symbol - add right run
+                        int rlen = subMeta.getRightRunLength();
+                        int term = subMeta.getRightmostTerminal();
+                        if (term >= 0) {
+                            for (int j = 0; j < rlen; j++) context.add(term);
+                        }
+                    } else if (i == rhs.size() - 1) {
+                        // Last symbol - add left run
+                        int llen = subMeta.getLeftRunLength();
+                        int term = subMeta.getLeftmostTerminal();
+                        if (term >= 0) {
+                            for (int j = 0; j < llen; j++) context.add(term);
+                        }
+                    } else {
+                        // Middle symbol - add entire length
+                        int subLen = subMeta.getLength();
+                        int subTerm = subMeta.getLeftmostTerminal();
+                        if (subTerm >= 0) {
+                            for (int j = 0; j < subLen; j++) {
+                                context.add(subTerm);
+                            }
+                        }
+                    }
                 }
             }
 
-            // Left run of last symbol
-            int last = rhs.get(rhs.size() - 1);
-            if (last < 256) context.add(last);
-            else {
-                int llen = metadata.getOrDefault(last, dummyMeta()).getLeftRunLength();
-                int term = metadata.getOrDefault(last, dummyMeta()).getLeftmostTerminal();
-                for (int i = 0; i < llen; i++) context.add(term);
-            }
-
-            // Step 2: Scan for c^d blocks (d ≥ 2)
+            // Scan for repeating bigrams in context
             for (int i = 0; i < context.size(); ) {
                 int c = context.get(i);
                 int j = i + 1;
@@ -582,22 +406,40 @@ public class Recompressor {
 
                 int d = j - i;
                 if (d >= 2) {
-                    // Step 3: Skip if block is prefix/suffix of valSh(X)
+                    // Check if this is not a prefix/suffix run
                     boolean isPrefix = (i == 0 && meta.getLeftRunLength() == d);
                     boolean isSuffix = (j == context.size() && meta.getRightRunLength() == d);
                     if (!isPrefix && !isSuffix) {
-                        freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
+                        Pair<Integer, Integer> bigram = Pair.of(c, c);
+                        int count = (d / 2) * vocc;
+                        freqMap.merge(bigram, count, Integer::sum);
+                        System.out.printf("Added repeating bigram (%s,%s) with count += %d%n",
+                                formatSymbol(c), formatSymbol(c), count);
                     }
                 }
+
                 i = j;
             }
         }
 
+        System.out.println("\n=== Completed Repeating Bigram Frequency Computation ===");
         return freqMap;
     }
 
 
-    public static Parser.ParsedGrammar initializeWithSentinelsAndRootRule(Parser.ParsedGrammar original) {
+
+
+    public static class InitializedGrammar {
+        public final Parser.ParsedGrammar grammar;
+        public final Set<Integer> artificialTerminals;
+
+        public InitializedGrammar(Parser.ParsedGrammar grammar, Set<Integer> artificialTerminals) {
+            this.grammar = grammar;
+            this.artificialTerminals = artificialTerminals;
+        }
+    }
+
+    public static InitializedGrammar initializeWithSentinelsAndRootRule(Parser.ParsedGrammar original) {
         Map<Integer, List<Integer>> oldRules = original.grammarRules();
         List<Integer> originalSeq = original.sequence();
 
@@ -630,7 +472,13 @@ public class Recompressor {
         int rootRule = current;
         List<Integer> newSeq = List.of(rootRule);
 
-        return new Parser.ParsedGrammar(newRules, newSeq, null); // metadata will be recomputed later
+        // No artificial terminals at initialization - they will be added during recompression
+        Set<Integer> artificialTerminals = new HashSet<>();
+
+        return new InitializedGrammar(
+                new Parser.ParsedGrammar(newRules, newSeq, null),
+                artificialTerminals
+        );
     }
     public static Pair<Integer, Integer> getMostOccurringBigram(Map<Pair<Integer, Integer>, Integer> frequencies) {
         if (frequencies == null || frequencies.isEmpty()) {
@@ -649,35 +497,42 @@ public class Recompressor {
 
         return maxBigram;
     }
-    public static void popInlet(int c1, int c2, Map<Integer, List<Integer>> rules, Map<Integer, RuleMetadata> metadata) {
-
+    public static void popInlet(int c1, int c2,
+                                Map<Integer, List<Integer>> rules,
+                                Map<Integer, RuleMetadata> metadata,
+                                Set<Integer> artificialTerminals) {
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            if (artificialTerminals.contains(entry.getKey())) {
+                continue; // Skip artificial terminals
+            }
+
             List<Integer> rhs = entry.getValue();
             List<Integer> updated = new ArrayList<>();
 
             for (int i = 0; i < rhs.size(); i++) {
                 int sym = rhs.get(i);
 
-                if (sym >= 256) { // It's a nonterminal (variable)
+                if (sym >= 256 && !artificialTerminals.contains(sym)) {
+                    // It's a regular non-terminal (not artificial)
                     RuleMetadata meta = metadata.get(sym);
                     if (meta == null) {
                         updated.add(sym);
                         continue;
                     }
 
-                    // Push c2 to the left if sym is not the first symbol and starts with c2
+                    // Push c2 to the left if needed
                     if (i > 0 && meta.getLeftmostTerminal() == c2) {
                         updated.add(c2);
                     }
 
                     updated.add(sym);
 
-                    // Push c1 to the right if sym is not the last symbol and ends with c1
+                    // Push c1 to the right if needed
                     if (i < rhs.size() - 1 && meta.getRightmostTerminal() == c1) {
                         updated.add(c1);
                     }
                 } else {
-                    // It's a terminal, just add it
+                    // It's a terminal or artificial terminal
                     updated.add(sym);
                 }
             }
@@ -688,26 +543,37 @@ public class Recompressor {
 
     public static void popOutLet(int c1, int c2,
                                  Map<Integer, List<Integer>> rules,
-                                 Map<Integer, RuleMetadata> metadata) {
+                                 Map<Integer, RuleMetadata> metadata,
+                                 Set<Integer> artificialTerminals) {
         Set<Integer> nullRules = new HashSet<>();
 
         // First pass: remove c2 from head and c1 from tail
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int ruleId = entry.getKey();
+
+            // Skip artificial terminals - they should not be modified
+            if (artificialTerminals.contains(ruleId)) {
+                System.out.printf("Skipping artificial terminal R%d in popOutLet%n", ruleId);
+                continue;
+            }
+
             List<Integer> body = new ArrayList<>(entry.getValue());
 
             // Remove c2 from the start
             if (!body.isEmpty() && body.get(0) == c2) {
                 body.remove(0);
+                System.out.printf("Removed %s from start of R%d%n", formatSymbol(c2), ruleId);
             }
 
             // Remove c1 from the end
             if (!body.isEmpty() && body.get(body.size() - 1) == c1) {
                 body.remove(body.size() - 1);
+                System.out.printf("Removed %s from end of R%d%n", formatSymbol(c1), ruleId);
             }
 
             if (body.isEmpty()) {
                 nullRules.add(ruleId);
+                System.out.printf("Rule R%d became null%n", ruleId);
             } else {
                 rules.put(ruleId, body);
             }
@@ -716,21 +582,66 @@ public class Recompressor {
         // Second pass: remove references to null rules in all remaining rules
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int ruleId = entry.getKey();
-            if (nullRules.contains(ruleId)) continue;
+
+            // Skip null rules and artificial terminals
+            if (nullRules.contains(ruleId) || artificialTerminals.contains(ruleId)) {
+                continue;
+            }
 
             List<Integer> original = entry.getValue();
             List<Integer> filtered = new ArrayList<>();
+            boolean changed = false;
+
             for (int sym : original) {
                 if (!nullRules.contains(sym)) {
                     filtered.add(sym);
+                } else {
+                    changed = true;
+                    System.out.printf("Removed null rule R%d from R%d%n", sym, ruleId);
                 }
             }
-            rules.put(ruleId, filtered);
+
+            if (changed) {
+                rules.put(ruleId, filtered);
+            }
         }
 
         // Third pass: remove null rules from the grammar
         for (int nullRule : nullRules) {
             rules.remove(nullRule);
+            System.out.printf("Removed null rule R%d from grammar%n", nullRule);
+        }
+
+        // Important: Do NOT remove artificial terminals from the grammar
+        // even if they would become null (which shouldn't happen anyway)
+    }
+    public static void replaceBigramInRules(
+            int c1,
+            int c2,
+            int newRuleId,
+            Map<Integer, List<Integer>> rules,
+            Set<Integer> artificialTerminals
+    ) {
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            int ruleId = entry.getKey();
+            if (artificialTerminals.contains(ruleId)) {
+                continue; // do not touch artificial terminals
+            }
+
+            List<Integer> rhs = entry.getValue();
+            List<Integer> updated = new ArrayList<>();
+
+            for (int i = 0; i < rhs.size(); ) {
+                if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
+                    updated.add(newRuleId);
+                    i += 2;
+                } else {
+                    updated.add(rhs.get(i));
+                    i++;
+                }
+            }
+
+            entry.setValue(updated);
         }
     }
     public static Pair<Integer, Integer> getMostFrequentBigram(Map<Pair<Integer, Integer>, Integer> frequencies) {
@@ -738,15 +649,21 @@ public class Recompressor {
         int maxCount = -1;
 
         for (Map.Entry<Pair<Integer, Integer>, Integer> entry : frequencies.entrySet()) {
+            Pair<Integer, Integer> bigram = entry.getKey();
             int count = entry.getValue();
-            if (count > maxCount) {
+
+            if (count > maxCount ||
+                    (count == maxCount && mostFrequent != null &&
+                            (bigram.first < mostFrequent.first ||
+                                    (bigram.first.equals(mostFrequent.first) && bigram.second < mostFrequent.second)))) {
                 maxCount = count;
-                mostFrequent = entry.getKey();
+                mostFrequent = bigram;
             }
         }
 
         return mostFrequent;
     }
+
 
 
     private static RuleMetadata dummyMeta() {

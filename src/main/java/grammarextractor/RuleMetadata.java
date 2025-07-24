@@ -2,6 +2,8 @@ package grammarextractor;
 
 import java.util.*;
 
+import static grammarextractor.Main.formatSymbol;
+
 public class RuleMetadata {
     private final int vocc;
     private final int length;
@@ -30,8 +32,10 @@ public class RuleMetadata {
     public int getLeftRunLength() { return leftRunLength; }
     public int getRightRunLength() { return rightRunLength; }
 
-    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
-        System.out.println("=== Starting Metadata Computation ===");
+    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar,
+                                                        Set<Integer> artificialTerminals) {
+        boolean verbose = false;
+        if(verbose) System.out.println("=== Starting Metadata Computation ===");
 
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         List<Integer> sequence = grammar.sequence();
@@ -74,39 +78,47 @@ public class RuleMetadata {
             }
         }
 
-        // Compute metadata
+        // Compute metadata - pass artificialTerminals to computation methods
         for (int ruleId : rules.keySet()) {
-            System.out.println("\n--- Computing Metadata for Rule R" + ruleId + " ---");
+            if(verbose)System.out.println("\n--- Computing Metadata for Rule R" + ruleId + " ---");
+
+            if(verbose && artificialTerminals != null && artificialTerminals.contains(ruleId)) {
+                System.out.println("(This is an artificial terminal)");
+            }
 
             int vocc = voccMemo.getOrDefault(ruleId, 0);
-            System.out.println("Virtual Occurrence Count (vocc): " + vocc);
+            if(verbose)System.out.println("Virtual Occurrence Count (vocc): " + vocc);
 
             int length = computeLength(ruleId, rules, memoLen);
-            System.out.println("Expansion Length: " + length);
+            if(verbose)System.out.println("Expansion Length: " + length);
 
             int left = computeFirstTerminal(ruleId, rules, memoLeft);
-            System.out.println("Leftmost Terminal: " + (left == -1 ? "None" : left));
+            if(verbose)System.out.println("Leftmost Terminal: " + (left == -1 ? "None" : formatSymbol(left)));
 
             int right = computeLastTerminal(ruleId, rules, memoRight);
-            System.out.println("Rightmost Terminal: " + (right == -1 ? "None" : right));
+            if(verbose)System.out.println("Rightmost Terminal: " + (right == -1 ? "None" : formatSymbol(right)));
 
             boolean isSB = isSingleBlock(ruleId, rules, memoSB);
             if (isSB) {
-                System.out.println("Single-block detected (transitively): all symbols reduce to the same terminal.");
+                if(verbose)System.out.println("Single-block detected (transitively): all symbols reduce to the same terminal.");
             }
 
             int leftRun = computeLeftRun(ruleId, rules, memoLeftRun, memoLeft, memoLen);
-            System.out.println("Left Run Length: " + leftRun);
+            if(verbose)System.out.println("Left Run Length: " + leftRun);
 
             int rightRun = computeRightRun(ruleId, rules, memoRightRun, memoRight, memoLen);
-            System.out.println("Right Run Length: " + rightRun);
+            if(verbose) System.out.println("Right Run Length: " + rightRun);
 
             RuleMetadata ruleMeta = new RuleMetadata(vocc, length, left, right, isSB, leftRun, rightRun);
             meta.put(ruleId, ruleMeta);
         }
 
-        System.out.println("=== Metadata Computation Completed ===");
+        if(verbose)System.out.println("=== Metadata Computation Completed ===");
         return meta;
+    }
+    // Overloaded version for when artificial terminals aren't being tracked
+    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
+        return computeAll(grammar, null);
     }
 
     private static int computeVocc(int ruleId,
@@ -304,6 +316,7 @@ public class RuleMetadata {
         memoRun.put(id, run);
         return run;
     }
+
 
     private static int computeRightRun(int id, Map<Integer, List<Integer>> rules,
                                        Map<Integer, Integer> memoRun,

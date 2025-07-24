@@ -245,17 +245,28 @@
                         String grammarFile3 = scanner.nextLine().trim();
 
                         try {
-                            // Step 1: Parse the grammar (this computes metadata as well)
+                            // Step 1: Parse grammar and compute metadata
                             System.out.println("\nParsing grammar and computing metadata...");
                             Parser.ParsedGrammar parsed = Parser.parseFile(Path.of(grammarFile3));
-                            // ✅ Wrap top-level sequence with sentinels and reduce to a root rule
-                            Parser.ParsedGrammar initialized = Recompressor.initializeWithSentinelsAndRootRule(parsed);
+
+                            // Wrap top-level sequence with sentinels and reduce to a root rule
+                            Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(parsed);
+                            Parser.ParsedGrammar initialized = init.grammar;
+                            Set<Integer> artificial = init.artificialTerminals; // Get from initialization
+
+                            // Recompute metadata for the initialized grammar
+                            Map<Integer, RuleMetadata> initializedMetadata = RuleMetadata.computeAll(initialized, artificial);
+                            initialized = new Parser.ParsedGrammar(
+                                    initialized.grammarRules(),
+                                    initialized.sequence(),
+                                    initializedMetadata
+                            );
 
                             // Step 2: Print grammar rules
                             System.out.println("\n=== Grammar Rules ===");
                             Parser.printGrammar(parsed);
 
-                            // Step 3: Print metadata
+                            // Step 3: Print metadata (for original parsed grammar)
                             System.out.println("\n=== Rule Metadata ===");
                             for (Map.Entry<Integer, RuleMetadata> entry : parsed.metadata().entrySet()) {
                                 int ruleId = entry.getKey();
@@ -265,14 +276,14 @@
                                         ruleId,
                                         meta.getVocc(),
                                         meta.getLength(),
-                                        meta.getLeftmostTerminal() == -1 ? "None" : meta.getLeftmostTerminal(),
-                                        meta.getRightmostTerminal() == -1 ? "None" : meta.getRightmostTerminal(),
+                                        meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+                                        meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
                                         meta.isSingleBlock()
                                 );
                             }
 
-                            // Step 4: Compute bigram frequencies using compressed-space method
-                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(parsed,initialized);
+                            // Step 4: Compute bigram frequencies using new method
+                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial);
 
                             // Step 5: Print frequencies
                             System.out.println("\n=== Bigram Frequencies ===");
@@ -280,8 +291,8 @@
                                 Pair<Integer, Integer> bigram = entry.getKey();
                                 int freq = entry.getValue();
 
-                                String left = (bigram.first < 256) ? "'" + (char) (int) bigram.first + "'" : "R" + bigram.first;
-                                String right = (bigram.second < 256) ? "'" + (char) (int) bigram.second + "'" : "R" + bigram.second;
+                                String left = formatSymbol(bigram.first);
+                                String right = formatSymbol(bigram.second);
 
                                 System.out.printf("Bigram (%s, %s): %d%n", left, right, freq);
                             }
@@ -293,26 +304,29 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("recompressed once.txt");
+                        Path grammarFile13 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
-                        // ✅ Wrap top-level sequence with sentinels and reduce to a root rule
-                        Parser.ParsedGrammar initialized = Recompressor.initializeWithSentinelsAndRootRule(original);
+                        // ✅ Step 1: Wrap with sentinels and create binary grammar
+                        Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(original);
+                        Parser.ParsedGrammar initialized = init.grammar;
+                        Set<Integer> artificial = init.artificialTerminals; // Gets the set from initialization
 
-                        // ✅ Recompute and reattach metadata to initialized grammar
-                        Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(initialized);
+                        // ✅ Step 2: Compute metadata with artificial terminals
+                        Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(initialized, artificial);
                         Parser.ParsedGrammar parsed = new Parser.ParsedGrammar(
                                 initialized.grammarRules(), initialized.sequence(), newMetadata);
 
                         System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
 
-                        // ✅ Centralized advanced frequency calculation (excluding edge bigrams)
-                        Map<Pair<Integer, Integer>, Integer> advancedFreqs = Recompressor.computeBigramFrequencies(original, parsed);
+                        // ✅ Step 4: Compute compressed-space frequency map (new logic)
+                        Map<Pair<Integer, Integer>, Integer> advancedFreqs =
+                                Recompressor.computeBigramFrequencies(parsed, artificial);
 
-                        // ✅ Naive decompression-based frequency computation
+                        // ✅ Step 5: Compute naive decompression-based frequency map
                         Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed);
 
-                        // ✅ Union of all bigrams
+                        // ✅ Step 6: Compare all bigrams
                         Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
                         allBigrams.addAll(advancedFreqs.keySet());
                         allBigrams.addAll(naiveFreqs.keySet());
@@ -331,6 +345,7 @@
                             }
                         }
 
+                        // ✅ Step 7: Final Output
                         System.out.println("=== Advanced Frequency Roundtrip Results ===");
                         System.out.println(advancedFreqs);
 
@@ -346,8 +361,8 @@
                                     ruleId,
                                     meta.getVocc(),
                                     meta.getLength(),
-                                    meta.getLeftmostTerminal() == -1 ? "None" : meta.getLeftmostTerminal(),
-                                    meta.getRightmostTerminal() == -1 ? "None" : meta.getRightmostTerminal(),
+                                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+                                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
                                     meta.isSingleBlock(),
                                     meta.getLeftRunLength(),
                                     meta.getRightRunLength()
@@ -362,147 +377,15 @@
 
                         break;
                     }
-                    case 14: {
-                        Path grammarFile14 = Path.of("extracted_grammar.txt"); // Replace with your input file
-                        Parser.ParsedGrammar original = Parser.parseFile(grammarFile14);
 
-                        // Step 1: Initialize grammar with sentinels and root rule
-                        Parser.ParsedGrammar initialized = Recompressor.initializeWithSentinelsAndRootRule(original);
-
-                        // Step 2: Compute metadata for initialized grammar
-                        Map<Integer, RuleMetadata> recomputedMeta = RuleMetadata.computeAll(initialized);
-                        Parser.ParsedGrammar initializedWithMeta = new Parser.ParsedGrammar(
-                                initialized.grammarRules(),
-                                initialized.sequence(),
-                                recomputedMeta
-                        );
-
-                        // Save original decompressed string for comparison
-                        String originalDecompressed = Decompressor.decompress(original);
-
-                        // Print original grammar stats
-                        int originalRuleCount = original.grammarRules().size();
-                        int originalSymbolCount = original.grammarRules().values().stream().mapToInt(List::size).sum();
-                        System.out.printf("📦 Original Grammar: %d rules, %d total symbols%n", originalRuleCount, originalSymbolCount);
-
-                        // Step 3: Run Recompression
-                        Recompressor.recompress(original, initializedWithMeta);
-
-                        // Step 4: Decompress recompressed grammar
-                        String recompressedDecompressed = Decompressor.decompress(initializedWithMeta);
-
-                        // Step 5: Print recompressed grammar stats
-                        int finalRuleCount = initializedWithMeta.grammarRules().size();
-                        int finalSymbolCount = initializedWithMeta.grammarRules().values().stream().mapToInt(List::size).sum();
-                        System.out.printf("📉 Recompressed Grammar: %d rules, %d total symbols%n", finalRuleCount, finalSymbolCount);
-
-                        // Step 6: Compare decompressed outputs
-                        boolean identical = originalDecompressed.equals(recompressedDecompressed);
-
-                        System.out.println("\n=== Roundtrip Check ===");
-                        if (identical) {
-                            System.out.println("✅ Decompressed output matches after recompression.");
-                        } else {
-                            System.err.println("❌ Decompressed output mismatch!");
-                            System.out.println("Original:     " + originalDecompressed);
-                            System.out.println("Recompressed: " + recompressedDecompressed);
-                        }
-
-                        // Step 7: Compression statistics
-                        double compressionRatio = ((double) finalSymbolCount) / originalSymbolCount;
-                        System.out.printf("\n📊 Compression Ratio (symbols): %.2f%%\n", compressionRatio * 100.0);
-                        System.out.printf("🧱 Rule Count Reduction: %d → %d (%.2f%%)\n",
-                                originalRuleCount, finalRuleCount,
-                                100.0 * finalRuleCount / originalRuleCount);
-
-                        break;
-                    }
-                    case 15:
-                        Path grammarFile15 = Path.of("Test_grammar_20_words.txt"); // Replace with actual file path
-                        Parser.ParsedGrammar original = Parser.parseFile(grammarFile15);
-
-                        // Step 1: Add sentinels and wrap into binary grammar
-                        Parser.ParsedGrammar initialized = Recompressor.initializeWithSentinelsAndRootRule(original);
-
-                        // Step 2: Compute metadata
-                        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(initialized);
-                        Parser.ParsedGrammar grammarWithMeta = new Parser.ParsedGrammar(
-                                initialized.grammarRules(), initialized.sequence(), metadata
-                        );
-
-                        // Step 3: Decompress before uncrossing
-                        String before = Decompressor.decompress(grammarWithMeta);
-
-                        // Step 4: Get most frequent bigram
-                        Pair<Integer, Integer> bigram = Recompressor.getMostFrequentBigram(
-                                Recompressor.computeBigramFrequencies(original, grammarWithMeta));
-
-                        if (bigram == null) {
-                            System.out.println("❌ No compressible bigrams found.");
-                            break;
-                        }
-
-                        int c1 = bigram.first;
-                        int c2 = bigram.second;
-
-                        System.out.printf("🔍 Most frequent bigram for uncrossing: (%s, %s)%n",
-                                Main.formatSymbol(c1), Main.formatSymbol(c2));
-
-                        // Step 5: Apply uncrossing (PopInLet, PopOutLet)
-                        Recompressor.popInlet(c1, c2, grammarWithMeta.grammarRules(), metadata);
-                        Recompressor.popOutLet(c1, c2, grammarWithMeta.grammarRules(), metadata);
-
-                        // Step 6: Recompute metadata after uncrossing
-                        metadata = RuleMetadata.computeAll(grammarWithMeta);
-                        grammarWithMeta = new Parser.ParsedGrammar(
-                                grammarWithMeta.grammarRules(), grammarWithMeta.sequence(), metadata
-                        );
-
-                        // Step 7: Decompress after uncrossing
-                        String after = Decompressor.decompress(grammarWithMeta);
-
-                        // Step 8: Compare
-                        System.out.println("\n=== Roundtrip Check After Uncrossing Only ===");
-                        if (before.equals(after)) {
-                            System.out.println("✅ Grammar unchanged after uncrossing (roundtrip OK).");
-                        } else {
-                            System.err.println("❌ Uncrossing changed the grammar output!");
-                            System.out.println("Before: " + before);
-                            System.out.println("After : " + after);
-                            // Optional: print difference indicator
-                            int mismatchIndex = -1;
-                            for (int i = 0; i < Math.min(before.length(), after.length()); i++) {
-                                if (before.charAt(i) != after.charAt(i)) {
-                                    mismatchIndex = i;
-                                    break;
-                                }
-                            }
-                            if (mismatchIndex >= 0) {
-                                System.out.printf("🔎 First mismatch at index %d: '%c' vs '%c'%n",
-                                        mismatchIndex, before.charAt(mismatchIndex), after.charAt(mismatchIndex));
-                            }
-                        }
-
-                        break;
-
-                    case 16:
-                        Path grammarFile16 = Path.of("Test_grammar_20_words.txt");
-                        Parser.ParsedGrammar original16 = Parser.parseFile(grammarFile16);
-                        Recompressor.recompressOnceVerbose(original16);
-                        break;
-
-                    case 17:
-                        Path grammarFile17 = Path.of("Test_grammar_20_words.txt");
+                    case 14:
+                        Path grammarFile17 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressTwiceVerbose(original17);
+                        Recompressor.recompressNTimes(original17, 1);
+
                         break;
 
-                    case 18:
-                        Path grammarFile18 = Path.of("Test_grammar_20_words.txt");
-                        Parser.ParsedGrammar original18 = Parser.parseFile(grammarFile18);
-                        Recompressor.recompressUntilDoneVerbose(original18);
-                        break;
-                    
+
                     case 99:
                         System.exit(0);
                         break;
