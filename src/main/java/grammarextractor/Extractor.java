@@ -78,7 +78,7 @@ public class Extractor {
         copyReachableRules(excerptSequence, allRules, excerptRules, usageGraph);
 
         Parser.ParsedGrammar incomplete = new Parser.ParsedGrammar(excerptRules, excerptSequence, Collections.emptyMap());
-        Map<Integer, RuleMetadata> computedMeta = RuleMetadata.computeAll(incomplete);
+        Map<Integer, RuleMetadata> computedMeta = RuleMetadata.computeAll(incomplete,null);
         return new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
     }
 
