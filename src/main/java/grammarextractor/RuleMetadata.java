@@ -1,7 +1,6 @@
 package grammarextractor;
 
 import java.util.*;
-import static grammarextractor.Main.formatSymbol;
 
 public class RuleMetadata {
     private final int vocc;
@@ -31,90 +30,241 @@ public class RuleMetadata {
     public int getLeftRunLength() { return leftRunLength; }
     public int getRightRunLength() { return rightRunLength; }
 
+    // Create new metadata with updated vocc
+    public RuleMetadata withVocc(int newVocc) {
+        return new RuleMetadata(newVocc, length, leftmostTerminal, rightmostTerminal,
+                isSB, leftRunLength, rightRunLength);
+    }
+
     public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar,
                                                         Set<Integer> artificialTerminals) {
         if (artificialTerminals == null) {
             artificialTerminals = Collections.emptySet();
         }
-        boolean verbose = false;
-        if (verbose) System.out.println("=== Starting Metadata Computation ===");
 
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         List<Integer> sequence = grammar.sequence();
 
         Map<Integer, RuleMetadata> meta = new HashMap<>();
-        Map<Integer, Integer> memoLen = new HashMap<>();
-        Map<Integer, Integer> memoLeft = new HashMap<>();
-        Map<Integer, Integer> memoRight = new HashMap<>();
-        Map<Integer, Boolean> memoIsSB = new HashMap<>();
-        Map<Integer, Integer> memoSBBase = new HashMap<>();
-        Map<Integer, Integer> memoLeftRun = new HashMap<>();
-        Map<Integer, Integer> memoRightRun = new HashMap<>();
 
-        // Compute vocc
-        Map<Integer, Integer> voccMemo = computeVoccAll(rules, sequence);
+        // First compute vocc for all rules
+        Map<Integer, Integer> voccMap = computeVoccAll(rules, sequence);
 
-        // Compute metadata for each rule
-        for (int ruleId : rules.keySet()) {
-            if (verbose) System.out.println("\n--- Computing Metadata for Rule R" + ruleId + " ---");
+        // Then compute other metadata in topological order
+        List<Integer> topoOrder = getTopologicalOrder(rules);
 
-            int vocc = voccMemo.getOrDefault(ruleId, 0);
-            int length = computeLength(ruleId, rules, memoLen);
-            int left = computeFirstTerminal(ruleId, rules, memoLeft, artificialTerminals);
-            int right = computeLastTerminal(ruleId, rules, memoRight, artificialTerminals);
-            boolean isSB = isSingleBlock(ruleId, rules, memoIsSB, memoSBBase);
-            int leftRun = computeLeftRun(ruleId, rules, memoLeftRun, memoLeft, memoLen, artificialTerminals);
-            int rightRun = computeRightRun(ruleId, rules, memoRightRun, memoRight, memoLen, artificialTerminals);
+        for (int ruleId : topoOrder) {
+            if (!rules.containsKey(ruleId)) continue;
 
-            RuleMetadata ruleMeta = new RuleMetadata(vocc, length, left, right, isSB, leftRun, rightRun);
+            List<Integer> rhs = rules.get(ruleId);
+            int vocc = voccMap.getOrDefault(ruleId, 0);
+
+            // Compute metadata based on RHS and already computed children
+            RuleMetadata ruleMeta = computeRuleMetadata(
+                    ruleId, rhs, vocc, meta, artificialTerminals
+            );
+
             meta.put(ruleId, ruleMeta);
         }
 
-        if (verbose) System.out.println("=== Metadata Computation Completed ===");
         return meta;
     }
 
-    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
-        return computeAll(grammar, Collections.emptySet());
+    private static RuleMetadata computeRuleMetadata(
+            int ruleId,
+            List<Integer> rhs,
+            int vocc,
+            Map<Integer, RuleMetadata> computedMeta,
+            Set<Integer> artificialTerminals
+    ) {
+        if (rhs.isEmpty()) {
+            return new RuleMetadata(vocc, 0, -1, -1, false, 0, 0);
+        }
+
+        // Calculate length
+        int length = 0;
+        for (int sym : rhs) {
+            if (sym < 256) {
+                length++;
+            } else if (artificialTerminals.contains(sym)) {
+                // Artificial terminals count as 1
+                length++;
+            } else if (computedMeta.containsKey(sym)) {
+                length += computedMeta.get(sym).getLength();
+            }
+        }
+
+        // Find leftmost terminal
+        int leftmost = -1;
+        for (int sym : rhs) {
+            if (sym < 256 || artificialTerminals.contains(sym)) {
+                leftmost = sym;
+                break;
+            } else if (computedMeta.containsKey(sym)) {
+                leftmost = computedMeta.get(sym).getLeftmostTerminal();
+                if (leftmost != -1) break;
+            }
+        }
+
+        // Find rightmost terminal
+        int rightmost = -1;
+        for (int i = rhs.size() - 1; i >= 0; i--) {
+            int sym = rhs.get(i);
+            if (sym < 256 || artificialTerminals.contains(sym)) {
+                rightmost = sym;
+                break;
+            } else if (computedMeta.containsKey(sym)) {
+                rightmost = computedMeta.get(sym).getRightmostTerminal();
+                if (rightmost != -1) break;
+            }
+        }
+
+        // Check if single block
+        boolean isSB = checkSingleBlock(rhs, computedMeta, artificialTerminals);
+
+        // Compute run lengths
+        int leftRun = 0, rightRun = 0;
+        if (isSB && leftmost != -1) {
+            leftRun = computeLeftRunLength(rhs, leftmost, computedMeta, artificialTerminals);
+            rightRun = computeRightRunLength(rhs, rightmost, computedMeta, artificialTerminals);
+        }
+
+        return new RuleMetadata(vocc, length, leftmost, rightmost, isSB, leftRun, rightRun);
     }
 
-    // ---------------- O(n) vocc computation ----------------
-    private static Map<Integer, Integer> computeVoccAll(Map<Integer, List<Integer>> rules, List<Integer> sequence) {
-        Map<Integer, Integer> vocc = new HashMap<>();
-        Map<Integer, Map<Integer, Integer>> childCount = new HashMap<>();
-        Map<Integer, Integer> indegree = new HashMap<>();
+    private static boolean checkSingleBlock(
+            List<Integer> rhs,
+            Map<Integer, RuleMetadata> meta,
+            Set<Integer> artificialTerminals
+    ) {
+        if (rhs.isEmpty()) return false;
 
-        // 1. Initialize vocc from the sequence
+        Integer baseTerminal = null;
+
+        for (int sym : rhs) {
+            if (sym < 256 || artificialTerminals.contains(sym)) {
+                if (baseTerminal == null) {
+                    baseTerminal = sym;
+                } else if (!baseTerminal.equals(sym)) {
+                    return false;
+                }
+            } else if (meta.containsKey(sym)) {
+                RuleMetadata symMeta = meta.get(sym);
+                if (!symMeta.isSingleBlock()) return false;
+
+                int symBase = symMeta.getLeftmostTerminal();
+                if (baseTerminal == null) {
+                    baseTerminal = symBase;
+                } else if (baseTerminal != symBase) {
+                    return false;
+                }
+            }
+        }
+
+        return baseTerminal != null;
+    }
+
+    private static int computeLeftRunLength(
+            List<Integer> rhs,
+            int baseTerminal,
+            Map<Integer, RuleMetadata> meta,
+            Set<Integer> artificialTerminals
+    ) {
+        int run = 0;
+
+        for (int sym : rhs) {
+            if (sym < 256 || artificialTerminals.contains(sym)) {
+                if (sym == baseTerminal) {
+                    run++;
+                } else {
+                    break;
+                }
+            } else if (meta.containsKey(sym)) {
+                RuleMetadata symMeta = meta.get(sym);
+                if (symMeta.getLeftmostTerminal() != baseTerminal) break;
+
+                int symLeftRun = symMeta.getLeftRunLength();
+                run += symLeftRun;
+
+                // If the symbol doesn't consist entirely of the base terminal, stop
+                if (symLeftRun < symMeta.getLength()) break;
+            }
+        }
+
+        return run;
+    }
+
+    private static int computeRightRunLength(
+            List<Integer> rhs,
+            int baseTerminal,
+            Map<Integer, RuleMetadata> meta,
+            Set<Integer> artificialTerminals
+    ) {
+        int run = 0;
+
+        for (int i = rhs.size() - 1; i >= 0; i--) {
+            int sym = rhs.get(i);
+
+            if (sym < 256 || artificialTerminals.contains(sym)) {
+                if (sym == baseTerminal) {
+                    run++;
+                } else {
+                    break;
+                }
+            } else if (meta.containsKey(sym)) {
+                RuleMetadata symMeta = meta.get(sym);
+                if (symMeta.getRightmostTerminal() != baseTerminal) break;
+
+                int symRightRun = symMeta.getRightRunLength();
+                run += symRightRun;
+
+                // If the symbol doesn't consist entirely of the base terminal, stop
+                if (symRightRun < symMeta.getLength()) break;
+            }
+        }
+
+        return run;
+    }
+
+    private static Map<Integer, Integer> computeVoccAll(
+            Map<Integer, List<Integer>> rules,
+            List<Integer> sequence
+    ) {
+        Map<Integer, Integer> vocc = new HashMap<>();
+
+        // Initialize vocc from sequence
         for (int sym : sequence) {
             if (sym >= 256) {
                 vocc.merge(sym, 1, Integer::sum);
             }
         }
 
-        // 2. Build child count and indegree
-        Set<Integer> allNonTerminals = new HashSet<>(rules.keySet());
+        // Build dependency graph
+        Map<Integer, Set<Integer>> dependencies = new HashMap<>();
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int parent = entry.getKey();
+            dependencies.putIfAbsent(parent, new HashSet<>());
+
             for (int sym : entry.getValue()) {
                 if (sym >= 256) {
-                    childCount.computeIfAbsent(parent, k -> new HashMap<>())
-                            .merge(sym, 1, Integer::sum);
-                    indegree.merge(sym, 1, Integer::sum);
-                    allNonTerminals.add(sym);
+                    dependencies.get(parent).add(sym);
                 }
             }
-            indegree.putIfAbsent(parent, indegree.getOrDefault(parent, 0));
         }
 
-        // 3. Topological order
-        List<Integer> topoOrder = topologicalSort(rules, allNonTerminals, indegree);
+        // Propagate vocc in topological order
+        List<Integer> topoOrder = getTopologicalOrder(rules);
 
-        // 4. Propagate vocc
         for (int rule : topoOrder) {
-            int v = vocc.getOrDefault(rule, 0);
-            if (childCount.containsKey(rule)) {
-                for (Map.Entry<Integer, Integer> child : childCount.get(rule).entrySet()) {
-                    vocc.merge(child.getKey(), v * child.getValue(), Integer::sum);
+            int ruleVocc = vocc.getOrDefault(rule, 0);
+            if (ruleVocc == 0) continue;
+
+            List<Integer> rhs = rules.get(rule);
+            if (rhs == null) continue;
+
+            for (int sym : rhs) {
+                if (sym >= 256) {
+                    vocc.merge(sym, ruleVocc, Integer::sum);
                 }
             }
         }
@@ -122,252 +272,58 @@ public class RuleMetadata {
         return vocc;
     }
 
-    private static List<Integer> topologicalSort(Map<Integer, List<Integer>> rules,
-                                                 Set<Integer> allNonTerminals,
-                                                 Map<Integer, Integer> indegree) {
-        Queue<Integer> q = new ArrayDeque<>();
-        List<Integer> order = new ArrayList<>();
+    private static List<Integer> getTopologicalOrder(Map<Integer, List<Integer>> rules) {
+        // Compute in-degrees
+        Map<Integer, Integer> indegree = new HashMap<>();
+        Set<Integer> allRules = new HashSet<>(rules.keySet());
 
-        for (int rule : allNonTerminals) {
-            if (indegree.getOrDefault(rule, 0) == 0) {
-                q.add(rule);
+        for (int rule : allRules) {
+            indegree.putIfAbsent(rule, 0);
+        }
+
+        for (List<Integer> rhs : rules.values()) {
+            for (int sym : rhs) {
+                if (sym >= 256 && allRules.contains(sym)) {
+                    indegree.merge(sym, 1, Integer::sum);
+                }
             }
         }
 
-        while (!q.isEmpty()) {
-            int r = q.poll();
-            order.add(r);
-            for (int sym : rules.getOrDefault(r, Collections.emptyList())) {
-                if (sym >= 256 && indegree.containsKey(sym)) {
-                    int newVal = indegree.get(sym) - 1;
-                    indegree.put(sym, newVal);
-                    if (newVal == 0) {
-                        q.add(sym);
+        // Topological sort
+        Queue<Integer> queue = new ArrayDeque<>();
+        for (Map.Entry<Integer, Integer> entry : indegree.entrySet()) {
+            if (entry.getValue() == 0) {
+                queue.add(entry.getKey());
+            }
+        }
+
+        List<Integer> order = new ArrayList<>();
+        while (!queue.isEmpty()) {
+            int rule = queue.poll();
+            order.add(rule);
+
+            List<Integer> rhs = rules.get(rule);
+            if (rhs != null) {
+                for (int sym : rhs) {
+                    if (sym >= 256 && indegree.containsKey(sym)) {
+                        int newDegree = indegree.get(sym) - 1;
+                        indegree.put(sym, newDegree);
+                        if (newDegree == 0) {
+                            queue.add(sym);
+                        }
                     }
                 }
             }
         }
 
-        if (order.size() != allNonTerminals.size()) {
+        if (order.size() != allRules.size()) {
             throw new IllegalStateException("Cycle detected in grammar rules");
         }
 
         return order;
     }
 
-    // ---------------- Other Metadata Methods ----------------
-    private static boolean isTerminalOrArtificial(int sym, Set<Integer> artificialTerminals) {
-        return sym < 256 || (artificialTerminals != null && artificialTerminals.contains(sym));
-    }
-
-    private static boolean isSingleBlock(int id,
-                                         Map<Integer, List<Integer>> rules,
-                                         Map<Integer, Boolean> memoIsSB,
-                                         Map<Integer, Integer> memoBase) {
-        if (memoIsSB.containsKey(id)) return memoIsSB.get(id);
-        if (!rules.containsKey(id)) return false;
-        List<Integer> rhs = rules.get(id);
-        if (rhs == null || rhs.isEmpty()) {
-            memoIsSB.put(id, false);
-            return false;
-        }
-
-        int base = getSingleBlockTerminal(rhs.get(0), rules, memoBase);
-        if (base == -1) {
-            memoIsSB.put(id, false);
-            return false;
-        }
-        for (int sym : rhs) {
-            if (getSingleBlockTerminal(sym, rules, memoBase) != base) {
-                memoIsSB.put(id, false);
-                return false;
-            }
-        }
-        memoIsSB.put(id, true);
-        return true;
-    }
-
-    private static int getSingleBlockTerminal(int sym, Map<Integer, List<Integer>> rules,
-                                              Map<Integer, Integer> memoBase) {
-        if (sym < 256) return sym;
-        if (memoBase.containsKey(sym)) return memoBase.get(sym);
-
-        List<Integer> rhs = rules.get(sym);
-        if (rhs == null || rhs.isEmpty()) {
-            memoBase.put(sym, -1);
-            return -1;
-        }
-
-        int base = getSingleBlockTerminal(rhs.get(0), rules, memoBase);
-        if (base == -1) {
-            memoBase.put(sym, -1);
-            return -1;
-        }
-
-        for (int s : rhs) {
-            if (getSingleBlockTerminal(s, rules, memoBase) != base) {
-                memoBase.put(sym, -1);
-                return -1;
-            }
-        }
-        memoBase.put(sym, base);
-        return base;
-    }
-
-    private static int computeLength(int id, Map<Integer, List<Integer>> rules,
-                                     Map<Integer, Integer> memo) {
-        return computeLengthVisited(id, rules, memo, new HashSet<>());
-    }
-
-    private static int computeLengthVisited(int id,
-                                            Map<Integer, List<Integer>> rules,
-                                            Map<Integer, Integer> memo,
-                                            Set<Integer> seen) {
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) {
-            memo.put(id, 0);
-            return 0;
-        }
-        if (seen.contains(id)) {
-            throw new IllegalStateException("Cycle detected at rule " + id);
-        }
-
-        seen.add(id);
-        int len = 0;
-        List<Integer> rhs = rules.get(id);
-        for (int sym : rhs) {
-            if (sym < 256) len++;
-            else len += computeLengthVisited(sym, rules, memo, seen);
-        }
-        seen.remove(id);
-        memo.put(id, len);
-        return len;
-    }
-
-    private static int computeFirstTerminal(int id, Map<Integer, List<Integer>> rules,
-                                            Map<Integer, Integer> memo,
-                                            Set<Integer> artificialTerminals) {
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) {
-            memo.put(id, -1);
-            return -1;
-        }
-        for (int sym : rules.get(id)) {
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                memo.put(id, sym);
-                return sym;
-            } else {
-                int inner = computeFirstTerminal(sym, rules, memo, artificialTerminals);
-                if (inner != -1) {
-                    memo.put(id, inner);
-                    return inner;
-                }
-            }
-        }
-        memo.put(id, -1);
-        return -1;
-    }
-
-    private static int computeLastTerminal(int id, Map<Integer, List<Integer>> rules,
-                                           Map<Integer, Integer> memo,
-                                           Set<Integer> artificialTerminals) {
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) {
-            memo.put(id, -1);
-            return -1;
-        }
-        List<Integer> rhs = rules.get(id);
-        for (int i = rhs.size() - 1; i >= 0; i--) {
-            int sym = rhs.get(i);
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                memo.put(id, sym);
-                return sym;
-            } else {
-                int inner = computeLastTerminal(sym, rules, memo, artificialTerminals);
-                if (inner != -1) {
-                    memo.put(id, inner);
-                    return inner;
-                }
-            }
-        }
-        memo.put(id, -1);
-        return -1;
-    }
-
-    private static int computeLeftRun(int id, Map<Integer, List<Integer>> rules,
-                                      Map<Integer, Integer> memoRun,
-                                      Map<Integer, Integer> memoTerminal,
-                                      Map<Integer, Integer> memoLength,
-                                      Set<Integer> artificialTerminals) {
-        if (memoRun.containsKey(id)) return memoRun.get(id);
-        if (!rules.containsKey(id)) return 0;
-
-        List<Integer> rhs = rules.get(id);
-        if (rhs.isEmpty()) return 0;
-
-        int base = computeFirstTerminal(id, rules, memoTerminal, artificialTerminals);
-        if (base == -1) {
-            memoRun.put(id, 0);
-            return 0;
-        }
-
-        int run = 0;
-        for (int sym : rhs) {
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                if (sym == base) run++;
-                else break;
-            } else {
-                int subFirst = computeFirstTerminal(sym, rules, memoTerminal, artificialTerminals);
-                if (subFirst != base) break;
-
-                int subRun = computeLeftRun(sym, rules, memoRun, memoTerminal, memoLength, artificialTerminals);
-                run += subRun;
-
-                int subLen = computeLength(sym, rules, memoLength);
-                if (subRun < subLen) break;
-            }
-        }
-
-        memoRun.put(id, run);
-        return run;
-    }
-
-    private static int computeRightRun(int id, Map<Integer, List<Integer>> rules,
-                                       Map<Integer, Integer> memoRun,
-                                       Map<Integer, Integer> memoTerminal,
-                                       Map<Integer, Integer> memoLength,
-                                       Set<Integer> artificialTerminals) {
-        if (memoRun.containsKey(id)) return memoRun.get(id);
-        if (!rules.containsKey(id)) return 0;
-
-        List<Integer> rhs = rules.get(id);
-        if (rhs.isEmpty()) return 0;
-
-        int base = computeLastTerminal(id, rules, memoTerminal, artificialTerminals);
-        if (base == -1) {
-            memoRun.put(id, 0);
-            return 0;
-        }
-
-        int run = 0;
-        for (int i = rhs.size() - 1; i >= 0; i--) {
-            int sym = rhs.get(i);
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                if (sym == base) run++;
-                else break;
-            } else {
-                int subLast = computeLastTerminal(sym, rules, memoTerminal, artificialTerminals);
-                if (subLast != base) break;
-
-                int subRun = computeRightRun(sym, rules, memoRun, memoTerminal, memoLength, artificialTerminals);
-                run += subRun;
-
-                int subLen = computeLength(sym, rules, memoLength);
-                if (subRun < subLen) break;
-            }
-        }
-
-        memoRun.put(id, run);
-        return run;
+    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
+        return computeAll(grammar, Collections.emptySet());
     }
 }
