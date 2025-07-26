@@ -251,8 +251,8 @@
 
                             // Wrap top-level sequence with sentinels and reduce to a root rule
                             Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(parsed);
-                            Parser.ParsedGrammar initialized = init.grammar;
-                            Set<Integer> artificial = init.artificialTerminals; // Get from initialization
+                            Parser.ParsedGrammar initialized = init.grammar();
+                            Set<Integer> artificial = init.artificialTerminals(); // Get from initialization
 
                             // Recompute metadata for the initialized grammar
                             Map<Integer, RuleMetadata> initializedMetadata = RuleMetadata.computeAll(initialized, artificial);
@@ -304,13 +304,13 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("Example.txt");
+                        Path grammarFile13 = Path.of("output.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Step 1: Wrap with sentinels and create binary grammar
                         Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(original);
-                        Parser.ParsedGrammar initialized = init.grammar;
-                        Set<Integer> artificial = init.artificialTerminals; // Gets the set from initialization
+                        Parser.ParsedGrammar initialized = init.grammar();
+                        Set<Integer> artificial = init.artificialTerminals(); // Gets the set from initialization
 
                         // ✅ Step 2: Compute metadata with artificial terminals
                         Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(initialized, artificial);
@@ -324,7 +324,7 @@
                                 Recompressor.computeBigramFrequencies(parsed, artificial);
 
                         // ✅ Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed);
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,true);
 
                         // ✅ Step 6: Compare all bigrams
                         Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
@@ -379,9 +379,9 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("LoremIpsum.txt");
+                        Path grammarFile17 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 100000,false);
+                        Recompressor.recompressNTimes(original17, 10000,true);
 
                         break;
 
@@ -412,8 +412,19 @@
             }
         }
 
-        public static Map<Pair<Integer, Integer>, Integer> computeFromDecompressed(Parser.ParsedGrammar grammar) {
+        public static Map<Pair<Integer, Integer>, Integer> computeFromDecompressed(
+                Parser.ParsedGrammar grammar,
+                boolean removeSentinels
+        ) {
+            // Step 1: Decompress
             String decompressed = Decompressor.decompress(grammar);
+
+            // Step 2: Remove sentinels if requested
+            if (removeSentinels) {
+                decompressed = decompressed.replace("#", "").replace("$", "");
+                System.out.println("Removed sentinel characters '#' and '$' from decompressed string.");
+            }
+
             Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
 
             System.out.println("\n=== Starting Naive Bigram Frequency Computation from Decompressed String ===");
@@ -460,19 +471,17 @@
                 }
             }
 
-            // Final Step: Remove start and end bigrams with '#' and '$'
-            int hash = (int) '#';
-            int dollar = (int) '$';
-
-            if (decompressed.length() >= 2) {
-                Pair<Integer, Integer> startBigram = Pair.of((int) decompressed.charAt(0), (int) decompressed.charAt(1));
-                Pair<Integer, Integer> endBigram = Pair.of((int) decompressed.charAt(decompressed.length() - 2),
-                        (int) decompressed.charAt(decompressed.length() - 1));
+            // Final Step: (Optional sentinel-based bigram removal is no longer needed if removeSentinels = true)
+            if (!removeSentinels) {
+                int hash = (int) '#';
+                int dollar = (int) '$';
+                // Here you could explicitly remove bigrams containing # or $ if needed
             }
 
             System.out.println("=== Completed Naive Bigram Frequency Computation ===");
             return bigramFreqs;
         }
+
 
 
 

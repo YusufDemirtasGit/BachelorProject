@@ -15,7 +15,6 @@ public class Extractor {
         List<Integer> excerptSequence = new ArrayList<>();
         Map<Integer, List<Integer>> excerptRules = new HashMap<>();
         Map<Integer, List<Integer>> allRules = parsedInput.grammarRules();
-        Map<Integer, RuleMetadata> metadata = parsedInput.metadata();
 
         int totalTraversed = 0;
         int startIndex = 0;
@@ -74,11 +73,13 @@ public class Extractor {
         }
 
         // Build usage graph + copy reachable rules
-        Map<Integer, Set<Integer>> usageGraph = buildUsageGraph(allRules);
-        copyReachableRules(excerptSequence, allRules, excerptRules, usageGraph);
+        Parser.ParsedGrammar incomplete =
+                new Parser.ParsedGrammar(excerptRules, excerptSequence, Collections.emptyMap());
 
-        Parser.ParsedGrammar incomplete = new Parser.ParsedGrammar(excerptRules, excerptSequence, Collections.emptyMap());
-        Map<Integer, RuleMetadata> computedMeta = RuleMetadata.computeAll(incomplete);
+        // Call with empty artificial terminal set
+        Map<Integer, RuleMetadata> computedMeta =
+                RuleMetadata.computeAll(incomplete, Collections.emptySet());
+
         return new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
     }
 

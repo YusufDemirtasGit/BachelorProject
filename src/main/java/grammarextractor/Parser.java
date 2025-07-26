@@ -43,8 +43,8 @@ public class Parser {
         // 1. Build a grammar with empty metadata
         ParsedGrammar partialGrammar = new ParsedGrammar(grammarRules, sequence, Collections.emptyMap());
 
-        // 2. Compute metadata
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar);
+        // 2. Compute metadata (empty set for artificial terminals)
+        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar, Collections.emptySet());
 
         // 3. Return full grammar
         return new ParsedGrammar(grammarRules, sequence, metadata);
