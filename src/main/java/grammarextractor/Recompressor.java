@@ -12,7 +12,7 @@ import static grammarextractor.Main.formatSymbol;
 public class Recompressor {
 
 
-    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose) {
+    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose, boolean initializeGrammar) {
         if (verbose) {
             System.out.println("=== 🚀 Starting recompression ===");
             System.out.println("Max passes: " + maxPasses);
@@ -21,22 +21,28 @@ public class Recompressor {
             System.out.println("================================\n");
         }
 
-        // 0) Initialize with sentinels
-        if (verbose) System.out.println("🔧 Initializing grammar with sentinels...");
-        InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
-        Parser.ParsedGrammar initialized = init.grammar;
-
-        Set<Integer> artificialTerminals = new HashSet<>(init.artificialTerminals);
+        Parser.ParsedGrammar initialized;
+        Set<Integer> artificialTerminals = new HashSet<>();
         Map<Integer, List<Integer>> artificialRules = new LinkedHashMap<>();
+
+        if (initializeGrammar) {
+            // 0) Initialize with sentinels
+            if (verbose) System.out.println("🔧 Initializing grammar with sentinels...");
+            InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
+            initialized = init.grammar;
+            artificialTerminals.addAll(init.artificialTerminals);
+            if (verbose) {
+                System.out.println("✅ Initialization complete. Starting grammar:");
+                Parser.printGrammar(new Parser.ParsedGrammar(initialized.grammarRules(), initialized.sequence(), Collections.emptyMap()));
+                System.out.println();
+            }
+        } else {
+            if (verbose) System.out.println("🔧 Skipping grammar initialization...");
+            initialized = originalGrammar;
+        }
 
         Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
         List<Integer> sequence = new ArrayList<>(initialized.sequence());
-
-        if (verbose) {
-            System.out.println("✅ Initialization complete. Starting grammar:");
-            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()));
-            System.out.println();
-        }
 
         // Initialize next rule ID (just once)
         int initialMaxId = Math.max(
@@ -213,6 +219,7 @@ public class Recompressor {
 
 
 
+
     /** Helper to build a temporary grammar that merges main rules and artificial rules. */
     private static Parser.ParsedGrammar buildCombinedGrammar(
             Map<Integer, List<Integer>> rules,
@@ -236,44 +243,63 @@ public class Recompressor {
             Map<Integer, RuleMetadata> metadata,
             Set<Integer> artificialTerminals
     ) {
+        if (rhs.isEmpty()) return new ArrayList<>();
+
         List<Integer> context = new ArrayList<>();
 
-        for (int i = 0; i < rhs.size(); i++) {
-            int Y = rhs.get(i);
+        // Identify left child, middle, and right child based on paper's model
+        Integer leftChild = null;
+        Integer rightChild = null;
+        List<Integer> middle = new ArrayList<>();
 
-            if (Y < 256 || artificialTerminals.contains(Y)) {
-                // Terminal or artificial terminal: treat as atomic
-                context.add(Y);
-                continue;
-            }
+        // First element could be left child X'
+        if (!rhs.isEmpty() && rhs.get(0) >= 256 && !artificialTerminals.contains(rhs.get(0))) {
+            leftChild = rhs.get(0);
+        }
 
-            RuleMetadata yMeta = metadata.get(Y);
-            if (yMeta == null) {
-                context.add(-1); // Unknown metadata: break bigram runs
-                continue;
-            }
+        // Last element could be right child X` (if different from first)
+        if (rhs.size() > 1 && rhs.get(rhs.size()-1) >= 256 && !artificialTerminals.contains(rhs.get(rhs.size()-1))) {
+            rightChild = rhs.get(rhs.size()-1);
+        }
 
-            if (i == 0) {
-                // Right run of first child
-                for (int k = 0; k < yMeta.getRightRunLength(); k++)
-                    context.add(yMeta.getRightmostTerminal());
-            } else if (i == rhs.size() - 1) {
-                // Left run of last child
-                for (int k = 0; k < yMeta.getLeftRunLength(); k++)
-                    context.add(yMeta.getLeftmostTerminal());
-            } else {
-                // Middle children
-                if (yMeta.isSingleBlock()) {
-                    for (int k = 0; k < yMeta.getLength(); k++)
-                        context.add(yMeta.getLeftmostTerminal());
-                } else {
-                    // Multi-block nonterminal breaks the run
-                    context.add(-1);
+        // Determine middle range
+        int startMiddle = (leftChild != null) ? 1 : 0;
+        int endMiddle = (rightChild != null && rhs.size() > 1) ? rhs.size()-1 : rhs.size();
+
+        // Build context: ρ(X') + w + λ(X`)
+
+        // Add ρ(X') if left child exists
+        if (leftChild != null) {
+            RuleMetadata leftMeta = metadata.get(leftChild);
+            if (leftMeta != null) {
+                int rightTerminal = leftMeta.getRightmostTerminal();
+                int rightRunLen = leftMeta.getRightRunLength();
+                for (int i = 0; i < rightRunLen; i++) {
+                    context.add(rightTerminal);
                 }
             }
         }
+
+        // Add middle part w
+        for (int i = startMiddle; i < endMiddle; i++) {
+            context.add(rhs.get(i));
+        }
+
+        // Add λ(X`) if right child exists
+        if (rightChild != null) {
+            RuleMetadata rightMeta = metadata.get(rightChild);
+            if (rightMeta != null) {
+                int leftTerminal = rightMeta.getLeftmostTerminal();
+                int leftRunLen = rightMeta.getLeftRunLength();
+                for (int i = 0; i < leftRunLen; i++) {
+                    context.add(leftTerminal);
+                }
+            }
+        }
+
         return context;
     }
+
 
     /**
      * Computes frequencies of non-repeating bigrams (c1 != c2) for the grammar.
@@ -304,7 +330,6 @@ public class Recompressor {
             for (int i = 0; i < context.size() - 1; i++) {
                 int c1 = context.get(i);
                 int c2 = context.get(i + 1);
-                if (c1 < 0 || c2 < 0) continue; // Ignore sentinels
                 if (c1 != c2) {
                     bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
                 }
@@ -424,23 +449,6 @@ public class Recompressor {
                 new Parser.ParsedGrammar(newRules, newSeq, Collections.emptyMap()),
                 artificialTerminals
         );
-    }
-    public static Pair<Integer, Integer> getMostOccurringBigram(Map<Pair<Integer, Integer>, Integer> frequencies) {
-        if (frequencies == null || frequencies.isEmpty()) {
-            return null;
-        }
-
-        Pair<Integer, Integer> maxBigram = null;
-        int maxCount = -1;
-
-        for (Map.Entry<Pair<Integer, Integer>, Integer> entry : frequencies.entrySet()) {
-            if (entry.getValue() > maxCount) {
-                maxCount = entry.getValue();
-                maxBigram = entry.getKey();
-            }
-        }
-
-        return maxBigram;
     }
 
 
