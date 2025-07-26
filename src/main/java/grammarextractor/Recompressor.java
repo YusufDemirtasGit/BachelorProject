@@ -143,6 +143,7 @@ public class Recompressor {
                 System.out.println("After normalization (main rules only):");
                 Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
             }
+            removeRedundantRules(rules, sequence);
 
             // 5) Update metadata
             if (verbose) System.out.println("📊 Updating metadata...");
@@ -341,7 +342,12 @@ public class Recompressor {
 
     /**
      * Computes frequencies of repeating bigrams (c,c) for the grammar.
-     * Aligns with Lemma 1 of the paper.
+     *
+     * Based on Lemma 1 of the paper "RePair in Compressed Space and Time":
+     * - We detect blocks c^d (d >= 2) in ρ(X') · w_X · λ(X`).
+     * - A block is counted only if X "witnesses" its maximality.
+     * - Prefix/suffix blocks of val(X) are ignored if they belong to child variables
+     *   that are single-block nonterminals.
      */
     public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
@@ -354,37 +360,84 @@ public class Recompressor {
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int X = entry.getKey();
             if (artificialTerminals.contains(X)) continue;
+
             RuleMetadata xMeta = metadata.get(X);
+
+            boolean rhsSingleBlock = xMeta.isSingleBlock();
+
             if (xMeta == null) continue;
 
             int vocc = xMeta.getVocc();
             List<Integer> rhs = entry.getValue();
             if (rhs == null || rhs.isEmpty()) continue;
 
-            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+            // Determine if the leftmost or rightmost symbol of rhs is a single-block nonterminal
+            boolean leftIsSB = false;
+            boolean leftIsTerminal = false;
+            int rightmostTerminal = -1;
+            if (!rhs.isEmpty()) {
+                int first = rhs.get(0);
+                if (first >= 256 && !artificialTerminals.contains(first)) {
+                    RuleMetadata leftMeta = metadata.get(first);
+                    if (leftMeta != null) {
+                        leftIsSB = leftMeta.isSingleBlock();
 
-            // Scan for maximal runs
+                    }
+                }
+                else;
+                leftIsTerminal = true;
+
+            }
+            boolean rightIsTerminal = false;
+            boolean rightIsSB = false;
+            int leftmostTerminal = -1;
+            if (!rhs.isEmpty()) {
+                int last = rhs.get(rhs.size() - 1);
+                if (last >= 256 && !artificialTerminals.contains(last)) {
+                    RuleMetadata rightMeta = metadata.get(last);
+                    if (rightMeta != null) {
+                        rightIsSB = rightMeta.isSingleBlock();
+                    }
+                }
+                else;
+                rightIsTerminal = true;
+
+            }
+
+            // Build the context ρ(X') · w_X · λ(X`)
+            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+            System.out.println("current context");
+            System.out.println(context);
+
+            // Scan the context for runs of c^d (d >= 2)
             int i = 0;
             while (i < context.size()) {
                 int c = context.get(i);
                 int j = i + 1;
                 while (j < context.size() && context.get(j) == c) j++;
-                int d = j - i; // length of the run
+                int d = j - i; // run length
 
                 if (c >= 0 && d >= 2) {
-                    // Check if run is a prefix/suffix run of val(X)
-                    boolean isPrefix = (i == 0 && xMeta.getLeftmostTerminal() == c && d <= xMeta.getLeftRunLength());
-                    boolean isSuffix = (j == context.size() && xMeta.getRightmostTerminal() == c && d <= xMeta.getRightRunLength());
 
-                    if (!isPrefix && !isSuffix) {
+                    // Prefix check: Ignore run if it's the first block and belongs to a single-block left child
+                    boolean isPrefix = (i == 0 && leftIsSB) || (i==0 && c == rhs.getFirst() && rightIsSB) ;
+
+
+                    // Suffix check: Ignore run if it's the last block and belongs to a single-block right child
+                    boolean isSuffix = (j == context.size() && rightIsSB )|| (j==context.size() && c==rhs.getLast() && rightIsTerminal);
+
+                    if (!isPrefix && !isSuffix && !rhsSingleBlock ) {
                         freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
                     }
                 }
                 i = j;
             }
         }
+
         return freqMap;
     }
+
+
 
     /**
      * Merges non-repeating and repeating frequencies into one map.
@@ -709,6 +762,46 @@ public class Recompressor {
             }
         }
     }
+    /**
+     * Removes redundant rules of the form Rk: X (where RHS has only 1 symbol),
+     * by replacing Rk with X in all other rules and then deleting Rk.
+     */
+    public static void removeRedundantRules(Map<Integer, List<Integer>> rules, List<Integer> sequence) {
+        boolean changed;
+        do {
+            changed = false;
+            Set<Integer> toRemove = new HashSet<>();
+
+            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+                int ruleId = entry.getKey();
+                List<Integer> rhs = entry.getValue();
+
+                if (rhs.size() == 1) { // Single-leaf rule
+                    int replacement = rhs.get(0);
+                    // Replace ruleId with replacement everywhere
+                    for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+                        if (e.getKey() == ruleId) continue;
+                        List<Integer> newRhs = new ArrayList<>();
+                        for (int sym : e.getValue()) {
+                            newRhs.add((sym == ruleId) ? replacement : sym);
+                        }
+                        e.setValue(newRhs);
+                    }
+                    // Also update sequence
+                    for (int i = 0; i < sequence.size(); i++) {
+                        if (sequence.get(i) == ruleId) {
+                            sequence.set(i, replacement);
+                        }
+                    }
+                    toRemove.add(ruleId);
+                    changed = true;
+                }
+            }
+            // Remove redundant rules
+            for (int r : toRemove) rules.remove(r);
+        } while (changed);
+    }
+
 
 
 
