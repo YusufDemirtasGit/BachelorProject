@@ -379,9 +379,9 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_from_paper.txt");
+                        Path grammarFile17 = Path.of("Test_grammar_20_words.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 100000,true);
+                        Recompressor.recompressNTimes(original17, 20,false);
 
                         break;
 

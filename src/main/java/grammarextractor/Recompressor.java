@@ -42,7 +42,7 @@ public class Recompressor {
 
             Map<Pair<Integer, Integer>, Integer> frequencies =
                     computeBigramFrequencies(workingGrammar, artificialTerminals);
-
+            System.out.println(frequencies);
             Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies);
             if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
                 if (verbose) System.out.println("✅ No more compressible bigrams.");
@@ -58,12 +58,16 @@ public class Recompressor {
                 System.out.printf("📌 Most frequent bigram: (%s, %s) → R%d [%d occurrences]%n",
                         formatSymbol(c1), formatSymbol(c2), newRuleId, frequencies.get(bigram));
             }
-
+            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
             popInlet(c1, c2, rules, metadata, artificialTerminals);
+            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
             popOutLet(c1, c2, rules, metadata, artificialTerminals);
-            replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
-
+            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
+            System.out.println(rules);
             rules.put(newRuleId, List.of(c1, c2));
+            artificialTerminals.add(newRuleId);
+            replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
+            Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
             artificialTerminals.add(newRuleId);
             if (verbose) System.out.printf("🔒 Marked R%d as artificial terminal\n", newRuleId);
 
@@ -84,8 +88,8 @@ public class Recompressor {
                         newMeta.getRightRunLength());
             }
 
-            // Remove now redundant rules for extra space saving
-            workingGrammar = finalOptimizeGrammar(rules, sequence, metadata, artificialTerminals);
+
+
             rules = workingGrammar.grammarRules();
             metadata = workingGrammar.metadata();
             workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
@@ -122,6 +126,8 @@ public class Recompressor {
 
             before = after;
         }
+        // Remove now redundant rules for extra space saving
+        workingGrammar = finalOptimizeGrammar(rules, sequence, metadata, artificialTerminals);
         System.out.println("\n=== Rule Metadata ===");
         for (Map.Entry<Integer, RuleMetadata> entry : workingGrammar.metadata().entrySet()) {
             int ruleId = entry.getKey();
@@ -758,15 +764,167 @@ public class Recompressor {
             changed |= reuseExistingBigrams(rules);
         } while (changed);
 
-        // 3. Recompute metadata
+        // Ensure all rules are binary
+        binarizeGrammar(rules, metadata);
+
+        // Recompute metadata
         Map<Integer, RuleMetadata> newMeta = RuleMetadata.computeAll(
                 new Parser.ParsedGrammar(rules, sequence, metadata),
                 artificialTerminals
         );
         return new Parser.ParsedGrammar(rules, sequence, newMeta);
     }
+    public static void binarizeGrammar(
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata
+    ) {
+        int nextRuleId = Collections.max(rules.keySet()) + 1;
 
+        // We make a snapshot of the rules to avoid ConcurrentModificationException
+        List<Integer> allRuleIds = new ArrayList<>(rules.keySet());
 
+        for (int ruleId : allRuleIds) {
+            List<Integer> rhs = new ArrayList<>(rules.get(ruleId));
+            if (rhs == null || rhs.size() <= 2) {
+                continue; // Already binary
+            }
+
+            // Break down RHS into binary rules
+            while (rhs.size() > 2) {
+                int last = rhs.remove(rhs.size() - 1);
+                int secondLast = rhs.remove(rhs.size() - 1);
+
+                int newRuleId = nextRuleId++;
+                List<Integer> newRHS = new ArrayList<>();
+                newRHS.add(secondLast);
+                newRHS.add(last);
+                rules.put(newRuleId, newRHS);
+
+                // Compute metadata for the new binary rule
+                RuleMetadata newMeta = computeMetadataForRule(newRuleId, newRHS, metadata);
+                metadata.put(newRuleId, newMeta);
+
+                rhs.add(newRuleId);
+            }
+
+            // Update the current rule with its new (binary) RHS
+            rules.put(ruleId, rhs);
+            metadata.put(ruleId, computeMetadataForRule(ruleId, rhs, metadata));
+        }
+    }
+    private static RuleMetadata computeMetadataForRule(
+            int ruleId,
+            List<Integer> rhs,
+            Map<Integer, RuleMetadata> metadata
+    ) {
+        // Virtual occurrence count for new rules starts at 0 (will be updated later)
+        int vocc = 0;
+        int length = 0;
+        int leftmostTerminal = -1;
+        int rightmostTerminal = -1;
+        boolean isSB = true;
+        int leftRun = 0;
+        int rightRun = 0;
+
+        // Calculate metadata from RHS
+        for (int i = 0; i < rhs.size(); i++) {
+            int sym = rhs.get(i);
+            if (sym < 256) {
+                // Terminal
+                length++;
+                if (leftmostTerminal == -1) leftmostTerminal = sym;
+                rightmostTerminal = sym;
+            } else if (metadata.containsKey(sym)) {
+                RuleMetadata m = metadata.get(sym);
+                length += m.getLength();
+                if (leftmostTerminal == -1) leftmostTerminal = m.getLeftmostTerminal();
+                rightmostTerminal = m.getRightmostTerminal();
+                isSB = isSB && m.isSingleBlock();
+            } else {
+                isSB = false;
+            }
+        }
+
+        // Compute run lengths (only if single-block is true)
+        if (isSB && leftmostTerminal != -1) {
+            leftRun = computeRunFromLeft(rhs, metadata);
+            rightRun = computeRunFromRight(rhs, metadata);
+        }
+
+        return new RuleMetadata(vocc, length, leftmostTerminal, rightmostTerminal, isSB, leftRun, rightRun);
+    }
+    private static int computeRunFromLeft(List<Integer> rhs, Map<Integer, RuleMetadata> metadata) {
+        int count = 0;
+        int base = -1;
+        for (int sym : rhs) {
+            if (sym < 256) {
+                if (base == -1) base = sym;
+                if (sym == base) count++;
+                else break;
+            } else {
+                RuleMetadata m = metadata.get(sym);
+                if (base == -1) base = m.getLeftmostTerminal();
+                if (m.getLeftmostTerminal() == base && m.isSingleBlock()) {
+                    count += m.getLeftRunLength();
+                    if (m.getLeftRunLength() < m.getLength()) break;
+                } else break;
+            }
+        }
+        return count;
+    }
+
+    private static int computeRunFromRight(List<Integer> rhs, Map<Integer, RuleMetadata> metadata) {
+        int count = 0;
+        int base = -1;
+        for (int i = rhs.size() - 1; i >= 0; i--) {
+            int sym = rhs.get(i);
+            if (sym < 256) {
+                if (base == -1) base = sym;
+                if (sym == base) count++;
+                else break;
+            } else {
+                RuleMetadata m = metadata.get(sym);
+                if (base == -1) base = m.getRightmostTerminal();
+                if (m.getRightmostTerminal() == base && m.isSingleBlock()) {
+                    count += m.getRightRunLength();
+                    if (m.getRightRunLength() < m.getLength()) break;
+                } else break;
+            }
+        }
+        return count;
+    }
+    private static int getNextRuleId(Map<Integer, List<Integer>> rules) {
+        return rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
+    }
+    public static void enforceBinarization(Map<Integer, List<Integer>> rules) {
+        int nextRuleId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
+        Map<Integer, List<Integer>> newRules = new HashMap<>();
+
+        List<Integer> toBinarize = new ArrayList<>();
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            if (entry.getValue().size() > 2) {
+                toBinarize.add(entry.getKey());
+            }
+        }
+
+        for (int ruleId : toBinarize) {
+            List<Integer> rhs = rules.get(ruleId);
+            // Binarize chain from left to right
+            int current = rhs.get(0);
+            int i = 1;
+            while (i < rhs.size() - 1) {
+                int newId = nextRuleId++;
+                List<Integer> newRhs = List.of(current, rhs.get(i));
+                newRules.put(newId, newRhs);
+                current = newId;
+                i++;
+            }
+            // Final rule for ruleId
+            List<Integer> finalRhs = List.of(current, rhs.get(rhs.size() - 1));
+            rules.put(ruleId, finalRhs);
+        }
+        rules.putAll(newRules);
+    }
     private static RuleMetadata dummyMeta() {
         return new RuleMetadata(0, 0, -1, -1, false, 0, 0);
     }

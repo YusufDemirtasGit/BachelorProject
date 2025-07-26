@@ -33,6 +33,9 @@ public class RuleMetadata {
 
     public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar,
                                                         Set<Integer> artificialTerminals) {
+        if (artificialTerminals == null) {
+            artificialTerminals = Collections.emptySet();
+        }
         boolean verbose = false;
         if (verbose) System.out.println("=== Starting Metadata Computation ===");
 
@@ -43,14 +46,15 @@ public class RuleMetadata {
         Map<Integer, Integer> memoLen = new HashMap<>();
         Map<Integer, Integer> memoLeft = new HashMap<>();
         Map<Integer, Integer> memoRight = new HashMap<>();
-        Map<Integer, Integer> memoSB = new HashMap<>();
+        Map<Integer, Boolean> memoIsSB = new HashMap<>();
+        Map<Integer, Integer> memoSBBase = new HashMap<>();
         Map<Integer, Integer> memoLeftRun = new HashMap<>();
         Map<Integer, Integer> memoRightRun = new HashMap<>();
 
-        // Compute vocc in O(n)
+        // Compute vocc
         Map<Integer, Integer> voccMemo = computeVoccAll(rules, sequence);
 
-        // Compute metadata
+        // Compute metadata for each rule
         for (int ruleId : rules.keySet()) {
             if (verbose) System.out.println("\n--- Computing Metadata for Rule R" + ruleId + " ---");
 
@@ -58,7 +62,7 @@ public class RuleMetadata {
             int length = computeLength(ruleId, rules, memoLen);
             int left = computeFirstTerminal(ruleId, rules, memoLeft, artificialTerminals);
             int right = computeLastTerminal(ruleId, rules, memoRight, artificialTerminals);
-            boolean isSB = isSingleBlock(ruleId, rules, memoSB);
+            boolean isSB = isSingleBlock(ruleId, rules, memoIsSB, memoSBBase);
             int leftRun = computeLeftRun(ruleId, rules, memoLeftRun, memoLeft, memoLen, artificialTerminals);
             int rightRun = computeRightRun(ruleId, rules, memoRightRun, memoRight, memoLen, artificialTerminals);
 
@@ -71,12 +75,14 @@ public class RuleMetadata {
     }
 
     public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar) {
-        return computeAll(grammar, null);
+        return computeAll(grammar, Collections.emptySet());
     }
 
     // ---------------- O(n) vocc computation ----------------
     private static Map<Integer, Integer> computeVoccAll(Map<Integer, List<Integer>> rules, List<Integer> sequence) {
         Map<Integer, Integer> vocc = new HashMap<>();
+        Map<Integer, Map<Integer, Integer>> childCount = new HashMap<>();
+        Map<Integer, Integer> indegree = new HashMap<>();
 
         // 1. Initialize vocc from the sequence
         for (int sym : sequence) {
@@ -85,10 +91,8 @@ public class RuleMetadata {
             }
         }
 
-        // 2. Count references (child usage in RHS)
-        Map<Integer, Map<Integer, Integer>> childCount = new HashMap<>();
-        Map<Integer, Integer> indegree = new HashMap<>();
-
+        // 2. Build child count and indegree
+        Set<Integer> allNonTerminals = new HashSet<>(rules.keySet());
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int parent = entry.getKey();
             for (int sym : entry.getValue()) {
@@ -96,13 +100,14 @@ public class RuleMetadata {
                     childCount.computeIfAbsent(parent, k -> new HashMap<>())
                             .merge(sym, 1, Integer::sum);
                     indegree.merge(sym, 1, Integer::sum);
+                    allNonTerminals.add(sym);
                 }
             }
             indegree.putIfAbsent(parent, indegree.getOrDefault(parent, 0));
         }
 
-        // 3. Compute topological order
-        List<Integer> topoOrder = topologicalSort(rules, indegree);
+        // 3. Topological order
+        List<Integer> topoOrder = topologicalSort(rules, allNonTerminals, indegree);
 
         // 4. Propagate vocc
         for (int rule : topoOrder) {
@@ -117,11 +122,13 @@ public class RuleMetadata {
         return vocc;
     }
 
-    private static List<Integer> topologicalSort(Map<Integer, List<Integer>> rules, Map<Integer, Integer> indegree) {
+    private static List<Integer> topologicalSort(Map<Integer, List<Integer>> rules,
+                                                 Set<Integer> allNonTerminals,
+                                                 Map<Integer, Integer> indegree) {
         Queue<Integer> q = new ArrayDeque<>();
         List<Integer> order = new ArrayList<>();
 
-        for (int rule : rules.keySet()) {
+        for (int rule : allNonTerminals) {
             if (indegree.getOrDefault(rule, 0) == 0) {
                 q.add(rule);
             }
@@ -140,6 +147,11 @@ public class RuleMetadata {
                 }
             }
         }
+
+        if (order.size() != allNonTerminals.size()) {
+            throw new IllegalStateException("Cycle detected in grammar rules");
+        }
+
         return order;
     }
 
@@ -148,42 +160,57 @@ public class RuleMetadata {
         return sym < 256 || (artificialTerminals != null && artificialTerminals.contains(sym));
     }
 
-    private static boolean isSingleBlock(int id, Map<Integer, List<Integer>> rules, Map<Integer, Integer> memoSB) {
+    private static boolean isSingleBlock(int id,
+                                         Map<Integer, List<Integer>> rules,
+                                         Map<Integer, Boolean> memoIsSB,
+                                         Map<Integer, Integer> memoBase) {
+        if (memoIsSB.containsKey(id)) return memoIsSB.get(id);
         if (!rules.containsKey(id)) return false;
         List<Integer> rhs = rules.get(id);
-        if (rhs == null || rhs.isEmpty()) return false;
-
-        int base = getSingleBlockTerminal(rhs.get(0), rules, memoSB);
-        if (base == -1) return false;
-        for (int sym : rhs) {
-            if (getSingleBlockTerminal(sym, rules, memoSB) != base) return false;
+        if (rhs == null || rhs.isEmpty()) {
+            memoIsSB.put(id, false);
+            return false;
         }
+
+        int base = getSingleBlockTerminal(rhs.get(0), rules, memoBase);
+        if (base == -1) {
+            memoIsSB.put(id, false);
+            return false;
+        }
+        for (int sym : rhs) {
+            if (getSingleBlockTerminal(sym, rules, memoBase) != base) {
+                memoIsSB.put(id, false);
+                return false;
+            }
+        }
+        memoIsSB.put(id, true);
         return true;
     }
 
-    private static int getSingleBlockTerminal(int sym, Map<Integer, List<Integer>> rules, Map<Integer, Integer> memoSB) {
+    private static int getSingleBlockTerminal(int sym, Map<Integer, List<Integer>> rules,
+                                              Map<Integer, Integer> memoBase) {
         if (sym < 256) return sym;
-        if (memoSB.containsKey(sym)) return memoSB.get(sym);
+        if (memoBase.containsKey(sym)) return memoBase.get(sym);
 
         List<Integer> rhs = rules.get(sym);
         if (rhs == null || rhs.isEmpty()) {
-            memoSB.put(sym, -1);
+            memoBase.put(sym, -1);
             return -1;
         }
 
-        int base = getSingleBlockTerminal(rhs.get(0), rules, memoSB);
+        int base = getSingleBlockTerminal(rhs.get(0), rules, memoBase);
         if (base == -1) {
-            memoSB.put(sym, -1);
+            memoBase.put(sym, -1);
             return -1;
         }
 
         for (int s : rhs) {
-            if (getSingleBlockTerminal(s, rules, memoSB) != base) {
-                memoSB.put(sym, -1);
+            if (getSingleBlockTerminal(s, rules, memoBase) != base) {
+                memoBase.put(sym, -1);
                 return -1;
             }
         }
-        memoSB.put(sym, base);
+        memoBase.put(sym, base);
         return base;
     }
 
@@ -202,8 +229,7 @@ public class RuleMetadata {
             return 0;
         }
         if (seen.contains(id)) {
-            memo.put(id, 0);
-            return 0;
+            throw new IllegalStateException("Cycle detected at rule " + id);
         }
 
         seen.add(id);
