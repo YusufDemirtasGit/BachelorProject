@@ -304,7 +304,7 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("output.txt");
+                        Path grammarFile13 = Path.of("output_from_translated.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Step 1: Wrap with sentinels and create binary grammar
@@ -324,7 +324,7 @@
                                 Recompressor.computeBigramFrequencies(parsed, artificial);
 
                         // ✅ Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,true);
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,false,true);
 
                         // ✅ Step 6: Compare all bigrams
                         Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
@@ -379,11 +379,29 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_from_paper.txt");
+                        Path grammarFile17 = Path.of("Test_grammar_20_words.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 10000,true);
+                        Recompressor.recompressNTimes(original17, 1000,true,true);
 
                         break;
+                    case 15: {
+                        Path grammarFile13 = Path.of("Test_grammar_20_words.txt");
+                        Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
+
+
+
+                        System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
+
+
+                        // ✅ Step 5: Compute naive decompression-based frequency map
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(original,false,true);
+
+
+                        System.out.println("=== Naive Frequency Roundtrip Results ===");
+                        System.out.println(naiveFreqs);
+
+                        break;
+                    }
 
 
                     case 99:
@@ -414,12 +432,19 @@
 
         public static Map<Pair<Integer, Integer>, Integer> computeFromDecompressed(
                 Parser.ParsedGrammar grammar,
-                boolean removeSentinels
+                boolean removeSentinels,
+                boolean addSentinels
         ) {
             // Step 1: Decompress
             String decompressed = Decompressor.decompress(grammar);
 
-            // Step 2: Remove sentinels if requested
+            // Step 2: Add sentinels if requested
+            if (addSentinels) {
+                decompressed = "#" + decompressed + "$";
+                System.out.println("Added sentinel characters '#' (start) and '$' (end) to decompressed string.");
+            }
+
+            // Step 3: Remove sentinels if requested
             if (removeSentinels) {
                 decompressed = decompressed.replace("#", "").replace("$", "");
                 System.out.println("Removed sentinel characters '#' and '$' from decompressed string.");
@@ -471,16 +496,10 @@
                 }
             }
 
-            // Final Step: (Optional sentinel-based bigram removal is no longer needed if removeSentinels = true)
-            if (!removeSentinels) {
-                int hash = (int) '#';
-                int dollar = (int) '$';
-                // Here you could explicitly remove bigrams containing # or $ if needed
-            }
-
             System.out.println("=== Completed Naive Bigram Frequency Computation ===");
             return bigramFreqs;
         }
+
 
 
 
