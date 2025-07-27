@@ -32,14 +32,18 @@ public class RuleMetadata {
     public int getLeftRunLength() { return leftRunLength; }
     public int getRightRunLength() { return rightRunLength; }
 
+    /**
+     * Compute metadata for all rules in the grammar.
+     */
     public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar, Set<Integer> artificialTerminals) {
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         List<Integer> sequence = grammar.sequence();
         Map<Integer, RuleMetadata> meta = new HashMap<>();
 
-        // Simplified vocc computation
+        // Compute vocc for all rules
         Map<Integer, Integer> allVocc = computeVocc(rules, sequence);
 
+        // Memoization maps
         Map<Integer, Integer> lenMemo = new HashMap<>();
         Map<Integer, Integer> leftTermMemo = new HashMap<>();
         Map<Integer, Integer> rightTermMemo = new HashMap<>();
@@ -47,14 +51,20 @@ public class RuleMetadata {
         Map<Integer, Integer> leftRunMemo = new HashMap<>();
         Map<Integer, Integer> rightRunMemo = new HashMap<>();
 
+        // Precompute lengths for all rules
+        for (int ruleId : rules.keySet()) {
+            computeLength(ruleId, rules, lenMemo, new HashSet<>());
+        }
+
+        // Compute all metadata for each rule
         for (int ruleId : rules.keySet()) {
             int vocc = allVocc.getOrDefault(ruleId, 0);
-            int length = computeLength(ruleId, rules, lenMemo, new HashSet<>());
+            int length = lenMemo.getOrDefault(ruleId, 0);
             int leftTerm = computeFirstTerminal(ruleId, rules, leftTermMemo, artificialTerminals);
             int rightTerm = computeLastTerminal(ruleId, rules, rightTermMemo, artificialTerminals);
             boolean isSB = isSingleBlock(ruleId, rules, sbMemo, leftTermMemo, rightTermMemo, artificialTerminals);
-            int leftRun = computeLeftRun(ruleId, rules, leftRunMemo, leftTermMemo, lenMemo, artificialTerminals);
-            int rightRun = computeRightRun(ruleId, rules, rightRunMemo, rightTermMemo, lenMemo, artificialTerminals);
+            int leftRun = computeLeftRun(ruleId, rules, leftRunMemo, leftTermMemo, lenMemo, artificialTerminals, new HashSet<>());
+            int rightRun = computeRightRun(ruleId, rules, rightRunMemo, rightTermMemo, lenMemo, artificialTerminals, new HashSet<>());
 
             meta.put(ruleId, new RuleMetadata(vocc, length, leftTerm, rightTerm, isSB, leftRun, rightRun));
         }
@@ -127,7 +137,7 @@ public class RuleMetadata {
         if (id < 256) return 1;
         if (memo.containsKey(id)) return memo.get(id);
         if (!rules.containsKey(id)) return 0;
-        if (!visited.add(id)) return 0;
+        if (!visited.add(id)) return 0; // cycle guard
 
         int len = 0;
         for (int sym : rules.get(id)) len += computeLength(sym, rules, memo, visited);
@@ -195,45 +205,85 @@ public class RuleMetadata {
         return true;
     }
 
-    private static int computeLeftRun(int id, Map<Integer, List<Integer>> rules,
-                                      Map<Integer, Integer> memoRun, Map<Integer, Integer> memoTerminal,
-                                      Map<Integer, Integer> memoLength, Set<Integer> artificialTerminals) {
+    private static int computeLeftRun(
+            int id,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, Integer> memoLeftRun,
+            Map<Integer, Integer> memoFirstTerminal,
+            Map<Integer, Integer> memoLength,
+            Set<Integer> artificialTerminals,
+            Set<Integer> visited
+    ) {
         if (isTerminalOrArtificial(id, artificialTerminals)) return 1;
-        if (memoRun.containsKey(id)) return memoRun.get(id);
+        if (memoLeftRun.containsKey(id)) return memoLeftRun.get(id);
         if (!rules.containsKey(id)) return 0;
-        int base = computeFirstTerminal(id, rules, memoTerminal, artificialTerminals);
-        if (base == -1) return 0;
+        if (!visited.add(id)) return 0; // cycle guard
+
+        int base = computeFirstTerminal(id, rules, memoFirstTerminal, artificialTerminals);
+        if (base == -1) {
+            memoLeftRun.put(id, 0);
+            visited.remove(id);
+            return 0;
+        }
+
         int run = 0;
         for (int sym : rules.get(id)) {
-            if (computeFirstTerminal(sym, rules, memoTerminal, artificialTerminals) != base) break;
-            int subRun = computeLeftRun(sym, rules, memoRun, memoTerminal, memoLength, artificialTerminals);
+            if (computeFirstTerminal(sym, rules, memoFirstTerminal, artificialTerminals) != base) break;
+
+            int subRun = computeLeftRun(sym, rules, memoLeftRun, memoFirstTerminal, memoLength, artificialTerminals, visited);
+            int symLen = memoLength.getOrDefault(sym, 1);
+
             run += subRun;
-            if (subRun < computeLength(sym, rules, memoLength, new HashSet<>())) break;
+            if (subRun < symLen) break;
         }
-        memoRun.put(id, run);
+
+        visited.remove(id);
+        memoLeftRun.put(id, run);
         return run;
     }
 
-    private static int computeRightRun(int id, Map<Integer, List<Integer>> rules,
-                                       Map<Integer, Integer> memoRun, Map<Integer, Integer> memoTerminal,
-                                       Map<Integer, Integer> memoLength, Set<Integer> artificialTerminals) {
+    private static int computeRightRun(
+            int id,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, Integer> memoRightRun,
+            Map<Integer, Integer> memoLastTerminal,
+            Map<Integer, Integer> memoLength,
+            Set<Integer> artificialTerminals,
+            Set<Integer> visited
+    ) {
         if (isTerminalOrArtificial(id, artificialTerminals)) return 1;
-        if (memoRun.containsKey(id)) return memoRun.get(id);
+        if (memoRightRun.containsKey(id)) return memoRightRun.get(id);
         if (!rules.containsKey(id)) return 0;
-        int base = computeLastTerminal(id, rules, memoTerminal, artificialTerminals);
-        if (base == -1) return 0;
+        if (!visited.add(id)) return 0; // cycle guard
+
+        int base = computeLastTerminal(id, rules, memoLastTerminal, artificialTerminals);
+        if (base == -1) {
+            memoRightRun.put(id, 0);
+            visited.remove(id);
+            return 0;
+        }
+
         int run = 0;
         List<Integer> rhs = rules.get(id);
         for (int i = rhs.size() - 1; i >= 0; i--) {
             int sym = rhs.get(i);
-            if (computeLastTerminal(sym, rules, memoTerminal, artificialTerminals) != base) break;
-            int subRun = computeRightRun(sym, rules, memoRun, memoTerminal, memoLength, artificialTerminals);
+            if (computeLastTerminal(sym, rules, memoLastTerminal, artificialTerminals) != base) break;
+
+            int subRun = computeRightRun(sym, rules, memoRightRun, memoLastTerminal, memoLength, artificialTerminals, visited);
+            int symLen = memoLength.getOrDefault(sym, 1);
+
             run += subRun;
-            if (subRun < computeLength(sym, rules, memoLength, new HashSet<>())) break;
+            if (subRun < symLen) break;
         }
-        memoRun.put(id, run);
+
+        visited.remove(id);
+        memoRightRun.put(id, run);
         return run;
     }
+
+    /**
+     * Print metadata for debugging.
+     */
     public static void printMetadata(Map<Integer, RuleMetadata> metadata) {
         if (metadata == null || metadata.isEmpty()) {
             System.out.println("No metadata available.");
