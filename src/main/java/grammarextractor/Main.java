@@ -379,7 +379,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_grammar_20_words.txt");
+                        Path grammarFile17 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true);
 
@@ -402,6 +402,26 @@
 
                         break;
                     }
+                    case 16:
+                        Path grammarFile16 = Path.of("Test_grammar_20_words.txt");
+                        Parser.ParsedGrammar original16 = Parser.parseFile(grammarFile16);
+
+                        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(original16, new HashSet<>());
+                        int ruleId = 257;
+                        Parser.printGrammar(original16);
+                        System.out.println("=== Rule Metadata ===");
+                        RuleMetadata.printMetadata(metadata);
+                        Parser.RuleEditor.insert(original16.grammarRules(), ruleId, 0, 65);
+                        metadata = RuleMetadata.computeAll(original16, new HashSet<>());
+                        RuleMetadata.printMetadata(metadata);
+                        Parser.printGrammar(original16);
+                        Parser.RuleEditor.set(original16.grammarRules(), ruleId, 1, 12);
+                        metadata = RuleMetadata.computeAll(original16, new HashSet<>());
+                        RuleMetadata.printMetadata(metadata);
+                        Parser.printGrammar(original16);
+
+
+                        break;
 
 
                     case 99:
