@@ -45,11 +45,9 @@ public class Recompressor {
         List<Integer> sequence = new ArrayList<>(initialized.sequence());
 
         // Initialize next rule ID (just once)
-        int initialMaxId = Math.max(
-                rules.keySet().stream().max(Integer::compareTo).orElse(255),
-                artificialRules.keySet().stream().max(Integer::compareTo).orElse(255)
-        ) + 1;
+        int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
         AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
+
         if (verbose) System.out.println("📍 Initial nextRuleId = " + initialMaxId);
 
         // Compute initial metadata
@@ -70,7 +68,7 @@ public class Recompressor {
             System.out.println("=== 🧵 Decompressed BEFORE All Passes ===\n" + before);
             System.out.println("Original length: " + originalLength + " symbols");
         }
-
+        int counter = 1;
         // Main recompression loop
         for (int pass = 1; pass <= maxPasses; pass++) {
             if (verbose) {
@@ -78,6 +76,7 @@ public class Recompressor {
                 System.out.println("=== 🔁 Recompression Pass " + pass + " ===");
                 System.out.println("================================");
             }
+
 
             if (verbose) {
                 System.out.println("📊 Current metadata before pass " + pass + ":");
@@ -117,6 +116,14 @@ public class Recompressor {
                 System.out.println("Next available rule ID updated to: " + nextRuleId.get());
             }
 
+
+            if (verbose) System.out.println("📊 Updating metadata...");
+            metadata = RuleMetadata.computeAll(
+                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
+                    artificialTerminals
+            );
+
+
             // 1) Uncross bigram
             if (verbose) System.out.println("🔄 Uncrossing bigram in main rules...");
             uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
@@ -139,19 +146,6 @@ public class Recompressor {
             if (verbose) System.out.printf("🔒 Stored R%d as artificial rule (c1=%s, c2=%s)%n",
                     newRuleId, formatSymbol(c1), formatSymbol(c2));
 
-            removeRedundantRules(rules, sequence);
-            if (verbose) {
-                System.out.println("After normalization (main rules only):");
-                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-            }
-
-
-            if (verbose) System.out.println("📊 Updating metadata...");
-            metadata = RuleMetadata.computeAll(
-                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                    artificialTerminals
-            );
-
 
             // 5) Update metadata
             if (verbose) System.out.println("📊 Updating metadata...");
@@ -164,13 +158,23 @@ public class Recompressor {
                 RuleMetadata.printMetadata(metadata);
             }
 
+            removeRedundantRules(rules, sequence);
+            if (verbose) {
+                System.out.println("After normalization (main rules only):");
+                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
+            }
+            if (verbose) System.out.println("📊 Updating metadata...");
+            metadata = RuleMetadata.computeAll(
+                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
+                    artificialTerminals
+            );
 
             // 6) Roundtrip check
             if (verbose) System.out.println("🔍 Performing roundtrip check...");
             String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
             if (!before.equals(after)) {
                 if (verbose) {
-                    System.err.println("❌ Roundtrip mismatch detected! Stopping at pass " + pass);
+                    System.out.println("Roundtrip mismatch detected! Stopping at pass " + pass);
                 }
                 break;
             }
@@ -179,6 +183,7 @@ public class Recompressor {
             if (verbose) {
                 System.out.println("✅ Roundtrip check passed for pass " + pass + ".");
             }
+            counter++;
         }
         removeRedundantRules(rules, sequence);
         if (verbose) System.out.println("📊 Updating metadata...");
@@ -203,7 +208,7 @@ public class Recompressor {
         double compressionRatio = (100.0 * (originalLength - rhsSymbols)) / originalLength;
 
         if (verbose) {
-            System.out.println("\n=== 📦 Final Grammar After " + maxPasses + " Passes ===");
+            System.out.println("\n=== 📦 Final Grammar After " + counter + " Passes ===");
             Parser.printGrammar(finalGrammar);
 
             System.out.println("\n=== 📊 Compression Stats ===");
@@ -238,9 +243,9 @@ public class Recompressor {
     }
 
 
-
-
-    /** Helper to build a temporary grammar that merges main rules and artificial rules. */
+    /**
+     * Helper to build a temporary grammar that merges main rules and artificial rules.
+     */
     private static Parser.ParsedGrammar buildCombinedGrammar(
             Map<Integer, List<Integer>> rules,
             Map<Integer, List<Integer>> artificialRules,
@@ -255,8 +260,7 @@ public class Recompressor {
 
     /**
      * Builds the context ρ(X′) · w_X · λ(X`) for a given rule RHS.
-     * Artificial terminals are treated as atomic symbols.
-     * Non-uniform (multi-block) nonterminals insert a sentinel (-1) to break bigram runs.
+     * Updated to properly handle blocks as defined in the paper.
      */
     private static List<Integer> buildContext(
             List<Integer> rhs,
@@ -267,42 +271,42 @@ public class Recompressor {
 
         List<Integer> context = new ArrayList<>();
 
-        // Process first element
+        // Process first element - get its rightmost block ρ(X')
         int firstElement = rhs.get(0);
         if (firstElement < 256 || artificialTerminals.contains(firstElement)) {
-            // Terminal or artificial terminal - take as is
+            // Terminal or artificial terminal - single occurrence
             context.add(firstElement);
         } else {
-            // Non-terminal - get its rightmost run
+            // Non-terminal - get its rightmost block
             RuleMetadata firstMeta = metadata.get(firstElement);
-            if (firstMeta != null) {
-                int rightTerminal = firstMeta.getRightmostTerminal();
-                int rightRunLen = firstMeta.getRightRunLength();
-                for (int i = 0; i < rightRunLen; i++) {
-                    context.add(rightTerminal);
+            if (firstMeta != null && firstMeta.getRightmostBlock() != null) {
+                RuleMetadata.Block rightBlock = firstMeta.getRightmostBlock();
+                // Add the entire rightmost block
+                for (int i = 0; i < rightBlock.runLength; i++) {
+                    context.add(rightBlock.symbol);
                 }
             }
         }
 
-        // Process middle elements (if rhs has more than 2 elements)
+        // Process middle elements (if rhs has more than 2 elements) - these go as-is
         for (int i = 1; i < rhs.size() - 1; i++) {
             context.add(rhs.get(i));
         }
 
-        // Process last element (if different from first)
+        // Process last element - get its leftmost block λ(X`)
         if (rhs.size() > 1) {
             int lastElement = rhs.get(rhs.size() - 1);
             if (lastElement < 256 || artificialTerminals.contains(lastElement)) {
-                // Terminal or artificial terminal - take as is
+                // Terminal or artificial terminal - single occurrence
                 context.add(lastElement);
             } else {
-                // Non-terminal - get its leftmost run
+                // Non-terminal - get its leftmost block
                 RuleMetadata lastMeta = metadata.get(lastElement);
-                if (lastMeta != null) {
-                    int leftTerminal = lastMeta.getLeftmostTerminal();
-                    int leftRunLen = lastMeta.getLeftRunLength();
-                    for (int i = 0; i < leftRunLen; i++) {
-                        context.add(leftTerminal);
+                if (lastMeta != null && lastMeta.getLeftmostBlock() != null) {
+                    RuleMetadata.Block leftBlock = lastMeta.getLeftmostBlock();
+                    // Add the entire leftmost block
+                    for (int i = 0; i < leftBlock.runLength; i++) {
+                        context.add(leftBlock.symbol);
                     }
                 }
             }
@@ -343,7 +347,7 @@ public class Recompressor {
                 int c2 = context.get(i + 1);
                 if (c1 != c2) {
                     bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
-                    System.out.println("added repeating block " + c1 + c2 + " " + vocc + " times");
+                    System.out.println("added non-repeating block " + c1 + c2 + " " + vocc + " times");
                 }
             }
         }
@@ -353,12 +357,16 @@ public class Recompressor {
 
     /**
      * Computes frequencies of repeating bigrams (c,c) for the grammar.
-     *
+     * <p>
      * Based on Lemma 1 of the paper "RePair in Compressed Space and Time":
      * - We detect blocks c^d (d >= 2) in ρ(X') · w_X · λ(X`).
      * - A block is counted only if X "witnesses" its maximality.
      * - Prefix/suffix blocks of val(X) are ignored if they belong to child variables
-     *   that are single-block nonterminals.
+     * that are single-block nonterminals.
+     */
+    /**
+     * Computes frequencies of repeating bigrams (c,c) for the grammar.
+     * Based on Lemma 1 of the paper - properly handles witness checking.
      */
     public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
@@ -369,58 +377,28 @@ public class Recompressor {
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
 
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int X = entry.getKey();
-            if (artificialTerminals.contains(X)) continue;
+            int Y = entry.getKey();
+            if (artificialTerminals.contains(Y)) continue;
 
-            RuleMetadata xMeta = metadata.get(X);
+            RuleMetadata yMeta = metadata.get(Y);
+            if (yMeta == null) continue;
 
-            boolean rhsSingleBlock = xMeta.isSingleBlock();
-
-            if (xMeta == null) continue;
-
-            int vocc = xMeta.getVocc();
+            int vocc = yMeta.getVocc();
             List<Integer> rhs = entry.getValue();
             if (rhs == null || rhs.isEmpty()) continue;
 
-            // Determine if the leftmost or rightmost symbol of rhs is a single-block nonterminal
-            boolean leftIsSB = rhs.getFirst() < 256;
-            boolean leftIsTerminal = false;
-            int rightmostTerminal = -1;
-            if (!rhs.isEmpty()) {
-                int first = rhs.get(0);
-                if (first >= 256 && !artificialTerminals.contains(first)) {
-                    RuleMetadata leftMeta = metadata.get(first);
-                    if (leftMeta != null) {
-                        leftIsSB = leftMeta.isSingleBlock();
-
-                    }
-                }
-                else {
-                    leftIsTerminal = true;
-                }
-            }
-            boolean rightIsTerminal = false;
-            boolean rightIsSB = false;
-            int leftmostTerminal = -1;
-            if (!rhs.isEmpty()) {
-                int last = rhs.get(rhs.size() - 1);
-                if (last >= 256 && !artificialTerminals.contains(last)) {
-                    RuleMetadata rightMeta = metadata.get(last);
-                    if (rightMeta != null) {
-                        rightIsSB = rightMeta.isSingleBlock();
-                    }
-                }
-                else {
-                    rightIsTerminal = true;
-                }
-            }
-
-            // Build the context ρ(X') · w_X · λ(X`)
+            // Build context = ρ(X') · w_Y · λ(X`)
             List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
-            System.out.println("repeating current context for rule " + X + ":");
-            System.out.println(context);
 
-            // Scan the context for runs of c^d (d >= 2)
+            if (context.isEmpty()) continue;
+
+            // Check if first/last children are terminal or single-block
+            int X1 = rhs.get(0);
+            int X2 = rhs.get(rhs.size() - 1);
+            boolean leftIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
+            boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
+
+            // Scan context for runs of c^d (d >= 2)
             int i = 0;
             while (i < context.size()) {
                 int c = context.get(i);
@@ -428,18 +406,15 @@ public class Recompressor {
                 while (j < context.size() && context.get(j) == c) j++;
                 int d = j - i; // run length
 
-                if (c >= 0 && d >= 2) {
+                if (d >= 2) {
+                    // Check if this is a prefix or suffix run that should be ignored
+                    boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
+                    boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
 
-                    // Prefix check: Ignore run if it's the first block and belongs to a single-block left child
-                    boolean isPrefix = (i == 0 && leftIsSB) || (i==0 && c == rhs.getFirst() && leftIsTerminal) ;
-
-
-                    // Suffix check: Ignore run if it's the last block and belongs to a single-block right child
-                    boolean isSuffix = (j == context.size() && rightIsSB )|| (j==context.size() && c==rhs.getLast() && rightIsTerminal);
-
-                    if (!isPrefix && !isSuffix && !rhsSingleBlock ) {
+                    // Only count if Y witnesses the maximality of this block
+                    if (!isPrefixRun && !isSuffixRun) {
+                        // For a repeating bigram cc, a block c^d contributes floor(d/2) occurrences
                         freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
-                        System.out.println("added repeating block " + c + c + " " + (d/2)*vocc + " times");
                     }
                 }
                 i = j;
@@ -449,6 +424,17 @@ public class Recompressor {
         return freqMap;
     }
 
+    private static boolean isTerminalOrSingleBlock(
+            int symbol,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals
+    ) {
+        if (symbol < 256 || artificialTerminals.contains(symbol)) {
+            return true;
+        }
+        RuleMetadata m = metadata.get(symbol);
+        return m != null && m.isSingleBlock();
+    }
 
 
     /**
@@ -467,8 +453,6 @@ public class Recompressor {
         }
         return merged;
     }
-
-
 
 
     public record InitializedGrammar(Parser.ParsedGrammar grammar, Set<Integer> artificialTerminals) {
@@ -515,122 +499,258 @@ public class Recompressor {
                 artificialTerminals
         );
     }
-    public static void uncrossBigrams(
-            int c1, int c2,
+
+
+    /**
+     * Make the bigram (c1,c2) explicit inside every RHS so that the later replacement
+     * can be done by a pure linear scan (no implicit crossings through nonterminals).
+     * <p>
+     * - If c1 != c2 (non-repeating):
+     * • Strip leading c2 and trailing c1 terminals (or artificial terminals).
+     * • For each variable Y on RHS, if leftmostTerminal(Y)==c2, expand it to c2 Y
+     * (unless Y is first). If rightmostTerminal(Y)==c1, expand it to Y c1
+     * (unless Y is last). If both hold and Y is in the middle, expand to c2 Y c1.
+     * <p>
+     * - If c1 == c2 (repeating):
+     * • Delete explicit runs of c at the beginning and end of each RHS.
+     * • Using the context (ρ(X′) · w_X · λ(X)), if the run of c starts at the very
+     * beginning, push that run (>=2) to the left of the first variable.
+     * If the run of c ends at the very end, push it (>=2) to the right of the last variable.
+     * <p>
+     * Finally, remove empty rules and their references.
+     */
+    static void uncrossBigrams(
+            int c1,
+            int c2,
             Map<Integer, List<Integer>> rules,
             Map<Integer, RuleMetadata> metadata,
             Set<Integer> artificialTerminals
     ) {
-        boolean isRepeating = (c1 == c2);
-        Set<Integer> nullRules = new HashSet<>();
+        if (c1 == c2) {
+            uncrossRepeating(c1, rules, metadata, artificialTerminals);
+        } else {
+            uncrossNonRepeating(c1, c2, rules, metadata, artificialTerminals);
+        }
+        deleteEmptyRulesAndRewire(rules);
+    }
 
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int ruleId = entry.getKey();
+    /* --------------------------- non-repeating case --------------------------- */
 
-            // Skip artificial terminal rules
-            if (artificialTerminals.contains(ruleId)) continue;
+    /**
+     * Uncross repeating bigrams (c,c) in the grammar.
+     * Updated to properly compute push amounts from context.
+     */
+    private static void uncrossRepeating(
+            int c,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals
+    ) {
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            int X = e.getKey();
+            if (artificialTerminals.contains(X)) continue;
 
-            List<Integer> rhs = entry.getValue();
-            List<Integer> newRhs = new ArrayList<>();
+            List<Integer> rhs = new ArrayList<>(e.getValue());
+            if (rhs.isEmpty()) continue;
 
-            // First, perform PopOutLet on the current rule
-            int startIdx = 0;
-            int endIdx = rhs.size();
+            // 1) Strip leading/trailing explicit runs of c
+            int start = 0;
+            while (start < rhs.size() && rhs.get(start) == c) start++;
+            int end = rhs.size() - 1;
+            while (end >= start && rhs.get(end) == c) end--;
 
-            // Remove from beginning
-            if (!rhs.isEmpty()) {
-                if (isRepeating) {
-                    // Remove run of c from beginning
-                    while (startIdx < endIdx && rhs.get(startIdx) == c1) {
-                        startIdx++;
-                    }
-                } else {
-                    // Remove c2 from beginning
-                    if (rhs.get(startIdx) == c2) {
-                        startIdx++;
-                    }
-                }
-            }
-
-            // Remove from end
-            if (startIdx < endIdx) {
-                if (isRepeating) {
-                    // Remove run of c from end
-                    while (endIdx > startIdx && rhs.get(endIdx - 1) == c1) {
-                        endIdx--;
-                    }
-                } else {
-                    // Remove c1 from end
-                    if (rhs.get(endIdx - 1) == c1) {
-                        endIdx--;
-                    }
-                }
-            }
-
-            // Check if rule becomes null
-            if (startIdx >= endIdx) {
-                nullRules.add(ruleId);
+            rhs = (start <= end) ? new ArrayList<>(rhs.subList(start, end + 1)) : new ArrayList<>();
+            if (rhs.isEmpty()) {
+                e.setValue(rhs);
                 continue;
             }
 
-            // Process remaining symbols with PopInLet
-            for (int i = startIdx; i < endIdx; i++) {
-                int symbol = rhs.get(i);
+            // 2) Build context to determine how many c's to push
+            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
 
-                // For non-first position, check if we need to pop from left
-                if (i > startIdx && symbol >= 256 && !artificialTerminals.contains(symbol)) {
-                    RuleMetadata childMeta = metadata.get(symbol);
-                    if (childMeta != null) {
-                        if (isRepeating && childMeta.getLeftmostTerminal() == c1) {
-                            // Pop entire left run
-                            int runLength = childMeta.getLeftRunLength();
-                            for (int j = 0; j < runLength; j++) {
-                                newRhs.add(c1);
-                            }
-                        } else if (!isRepeating && childMeta.getLeftmostTerminal() == c2) {
-                            // Pop single c2
-                            newRhs.add(c2);
-                        }
-                    }
-                }
+            // Count prefix run of c in the context
+            int prefixRun = 0;
+            while (prefixRun < context.size() && context.get(prefixRun) == c) {
+                prefixRun++;
+            }
 
-                // Add the symbol itself (unless it's a null reference)
-                if (!nullRules.contains(symbol)) {
-                    newRhs.add(symbol);
-                }
+            // Count suffix run of c in the context
+            int suffixRun = 0;
+            for (int j = context.size() - 1; j >= 0 && context.get(j) == c; j--) {
+                suffixRun++;
+            }
 
-                // For non-last position, check if we need to pop from right
-                if (i < endIdx - 1 && symbol >= 256 && !artificialTerminals.contains(symbol)) {
-                    RuleMetadata childMeta = metadata.get(symbol);
-                    if (childMeta != null) {
-                        if (isRepeating && childMeta.getRightmostTerminal() == c1) {
-                            // Pop entire right run
-                            int runLength = childMeta.getRightRunLength();
-                            for (int j = 0; j < runLength; j++) {
-                                newRhs.add(c1);
-                            }
-                        } else if (!isRepeating && childMeta.getRightmostTerminal() == c1) {
-                            // Pop single c1
-                            newRhs.add(c1);
-                        }
-                    }
+            // Only push if run length >= 2 and target is a variable
+            boolean pushLeft = prefixRun >= 2 &&
+                    !rhs.isEmpty() &&
+                    isVariable(rhs.get(0), rules, artificialTerminals);
+
+            boolean pushRight = suffixRun >= 2 &&
+                    !rhs.isEmpty() &&
+                    isVariable(rhs.get(rhs.size() - 1), rules, artificialTerminals);
+
+            List<Integer> result = new ArrayList<>();
+
+            // Push prefix run if needed
+            if (pushLeft) {
+                for (int k = 0; k < prefixRun; k++) {
+                    result.add(c);
                 }
             }
 
-            // Update the rule
-            entry.setValue(newRhs);
+            // Add the middle content
+            result.addAll(rhs);
+
+            // Push suffix run if needed
+            if (pushRight) {
+                for (int k = 0; k < suffixRun; k++) {
+                    result.add(c);
+                }
+            }
+
+            e.setValue(result);
         }
+    }
 
-        // Remove null rules and their references in a second pass
-        for (int nullRule : nullRules) {
-            rules.remove(nullRule);
 
-            // Remove references to null rules
-            for (List<Integer> rhs : rules.values()) {
-                rhs.removeIf(s -> s == nullRule);
+
+
+    /* ---------------------------- repeating case ----------------------------- */
+
+    /**
+     * Uncross non-repeating bigrams (c1,c2) where c1 != c2.
+     * Updated to use block-aware metadata.
+     */
+    private static void uncrossNonRepeating(
+            int c1,
+            int c2,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals
+    ) {
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            int X = e.getKey();
+            if (artificialTerminals.contains(X)) continue;
+
+            List<Integer> rhs = new ArrayList<>(e.getValue());
+            if (rhs.isEmpty()) continue;
+
+            // 1) Strip explicit boundary terminals
+            if (!rhs.isEmpty() && isTerminalOrArtificial(rhs.get(0), artificialTerminals) && rhs.get(0) == c2) {
+                rhs.remove(0);
+            }
+            if (!rhs.isEmpty() && isTerminalOrArtificial(rhs.get(rhs.size() - 1), artificialTerminals) && rhs.get(rhs.size() - 1) == c1) {
+                rhs.remove(rhs.size() - 1);
+            }
+
+            if (rhs.isEmpty()) {
+                e.setValue(rhs);
+                continue;
+            }
+
+            // 2) Expand variables with c2 at left boundary or c1 at right boundary
+            List<Integer> out = new ArrayList<>();
+            for (int i = 0; i < rhs.size(); i++) {
+                int sym = rhs.get(i);
+
+                if (!isVariable(sym, rules, artificialTerminals)) {
+                    out.add(sym);
+                    continue;
+                }
+
+                RuleMetadata yMeta = metadata.get(sym);
+                if (yMeta == null) {
+                    out.add(sym);
+                    continue;
+                }
+
+                // Check if leftmost/rightmost blocks contain c1/c2
+                boolean hasLeft = false;
+                boolean hasRight = false;
+
+                if (yMeta.getLeftmostBlock() != null) {
+                    hasLeft = (yMeta.getLeftmostBlock().symbol == c2);
+                }
+                if (yMeta.getRightmostBlock() != null) {
+                    hasRight = (yMeta.getRightmostBlock().symbol == c1);
+                }
+
+                boolean isFirst = (i == 0);
+                boolean isLast = (i == rhs.size() - 1);
+
+                if (hasLeft && !isFirst) out.add(c2);
+                out.add(sym);
+                if (hasRight && !isLast) out.add(c1);
+            }
+
+            e.setValue(out);
+        }
+    }
+
+    /* ---------------------- cleanup: remove empty rules ----------------------- */
+
+    private static void deleteEmptyRulesAndRewire(Map<Integer, List<Integer>> rules) {
+        boolean changed = true;
+
+        while (changed) {
+            // 1. Find rules that are empty (no RHS symbols)
+            Set<Integer> emptyRules = rules.entrySet().stream()
+                    .filter(e -> e.getValue().isEmpty())
+                    .map(Map.Entry::getKey)
+                    .collect(Collectors.toSet());
+
+            if (emptyRules.isEmpty()) {
+                break; // No empty rules left, stop
+            }
+
+            changed = false;
+
+            // 2. Remove references to empty rules from all other RHSs
+            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+                int ruleId = entry.getKey();
+                if (emptyRules.contains(ruleId)) continue; // Will be removed anyway
+
+                List<Integer> rhs = entry.getValue();
+                List<Integer> updated = new ArrayList<>();
+
+                for (int sym : rhs) {
+                    if (!emptyRules.contains(sym)) {
+                        updated.add(sym);
+                    } else {
+                        changed = true;
+                    }
+                }
+                entry.setValue(updated);
+            }
+
+            // 3. Remove the empty rules themselves
+            for (int id : emptyRules) {
+                rules.remove(id);
+                changed = true;
             }
         }
     }
+
+    /* ---------------------------- small utilities ---------------------------- */
+
+    private static boolean isVariable(
+            int sym,
+            Map<Integer, List<Integer>> rules,
+            Set<Integer> artificialTerminals
+    ) {
+        return sym > 255 && rules.containsKey(sym) && !artificialTerminals.contains(sym);
+    }
+
+    private static boolean isTerminalOrArtificial(int sym, Set<Integer> artificialTerminals) {
+        return sym <= 255 || artificialTerminals.contains(sym);
+    }
+
+
+
+
+
+
+
 
 
 
@@ -818,7 +938,7 @@ public class Recompressor {
 
 
     private static RuleMetadata dummyMeta() {
-        return new RuleMetadata(0, 0, -1, -1, false, 0, 0);
+        return new RuleMetadata(0, 0, new RuleMetadata.Block(0,0), new RuleMetadata.Block(0,0), false);
     }
 
 

@@ -379,7 +379,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_from_paper.txt");
+                        Path grammarFile17 = Path.of("abracadabra.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true);
 
@@ -403,7 +403,7 @@
                         break;
                     }
                     case 16:
-                        Path grammarFile16 = Path.of("Test_grammar_20_words.txt");
+                        Path grammarFile16 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original16 = Parser.parseFile(grammarFile16);
 
                         Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(original16, new HashSet<>());
