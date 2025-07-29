@@ -283,7 +283,7 @@
                             }
 
                             // Step 4: Compute bigram frequencies using new method
-                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial);
+                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial,false);
 
                             // Step 5: Print frequencies
                             System.out.println("\n=== Bigram Frequencies ===");
@@ -304,7 +304,7 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("output_from_translated.txt");
+                        Path grammarFile13 = Path.of("LoremIpsum.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
                         // ✅ Step 1: Wrap with sentinels and create binary grammar
@@ -321,10 +321,10 @@
 
                         // ✅ Step 4: Compute compressed-space frequency map (new logic)
                         Map<Pair<Integer, Integer>, Integer> advancedFreqs =
-                                Recompressor.computeBigramFrequencies(parsed, artificial);
+                                Recompressor.computeBigramFrequencies(parsed, artificial,false);
 
                         // ✅ Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,false,true);
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,false,false);
 
                         // ✅ Step 6: Compare all bigrams
                         Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
@@ -379,9 +379,9 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("abracadabra.txt");
+                        Path grammarFile17 = Path.of("fibonacci.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 1000,true,true);
+                        Recompressor.recompressNTimes(original17, 1000,true,true,true);
 
                         break;
                     case 15: {
