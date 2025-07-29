@@ -265,23 +265,32 @@ public class Recompressor {
         return new Parser.ParsedGrammar(merged, sequence, metadata);
     }
     public static Parser.ParsedGrammar normalizeGrammar(Parser.ParsedGrammar grammar) {
-        Map<Integer, List<Integer>> originalRules = grammar.grammarRules();
-        List<Integer> originalSequence = grammar.sequence();
+        Map<Integer, List<Integer>> originalRules = new LinkedHashMap<>(grammar.grammarRules());
+        List<Integer> originalSequence = new ArrayList<>(grammar.sequence());
 
-        Map<Integer, List<Integer>> normalizedRules = new LinkedHashMap<>();
+        // Step 1: Expand single-rule sequence
+        if (originalSequence.size() == 1) {
+            int only = originalSequence.get(0);
+            if (only >= 256 && originalRules.containsKey(only)) {
+                // Replace sequence with RHS of that rule
+                originalSequence = new ArrayList<>(originalRules.get(only));
+                // Remove the rule from the grammar
+                originalRules.remove(only);
+            }
+        }
+
+        // Step 2: Create new rule ID mapping starting from 256
         Map<Integer, Integer> idMapping = new HashMap<>();
-
         int nextId = 256;
 
-        // Step 1: Assign new IDs in rule order
         for (Integer oldId : originalRules.keySet()) {
             idMapping.put(oldId, nextId++);
         }
 
-        // Step 2: Rebuild rules with new IDs and updated RHS
+        // Step 3: Rewrite rules using new IDs
+        Map<Integer, List<Integer>> normalizedRules = new LinkedHashMap<>();
         for (Map.Entry<Integer, List<Integer>> entry : originalRules.entrySet()) {
-            int oldId = entry.getKey();
-            int newId = idMapping.get(oldId);
+            int newId = idMapping.get(entry.getKey());
 
             List<Integer> newRhs = new ArrayList<>();
             for (int symbol : entry.getValue()) {
@@ -295,7 +304,7 @@ public class Recompressor {
             normalizedRules.put(newId, newRhs);
         }
 
-        // Step 3: Normalize the sequence (if it includes non-terminal rule IDs)
+        // Step 4: Rewrite the sequence
         List<Integer> normalizedSequence = new ArrayList<>();
         for (int symbol : originalSequence) {
             if (symbol >= 256 && idMapping.containsKey(symbol)) {
@@ -305,11 +314,9 @@ public class Recompressor {
             }
         }
 
-        // Step 4: Recompute metadata (empty artificial set, same as in parseFile)
-        Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(
-                new Parser.ParsedGrammar(normalizedRules, normalizedSequence, Collections.emptyMap()),
-                Collections.emptySet()
-        );
+        // Step 5: Recompute metadata
+        Parser.ParsedGrammar normalizedPartial = new Parser.ParsedGrammar(normalizedRules, normalizedSequence, Collections.emptyMap());
+        Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(normalizedPartial, Collections.emptySet());
 
         return new Parser.ParsedGrammar(normalizedRules, normalizedSequence, newMetadata);
     }
