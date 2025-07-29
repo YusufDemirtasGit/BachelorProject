@@ -660,94 +660,69 @@ private static void uncrossNonRepeating(
             Set<Integer> artificialTerminals
     ) {
         for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
-            int Y = e.getKey();
-            if (artificialTerminals.contains(Y)) continue;
+            int ruleId = e.getKey();
+            if (artificialTerminals.contains(ruleId)) continue;
 
-            List<Integer> rhs = e.getValue();
+            List<Integer> rhs = new ArrayList<>(e.getValue());
             if (rhs.isEmpty()) continue;
 
-            RuleMetadata yMeta = metadata.get(Y);
-            if (yMeta == null) continue;
-
-            // Case 1: If Y is single block with leftmost terminal c, delete its RHS
-            if (yMeta.isSingleBlock() && yMeta.getLeftmostTerminal() == c) {
-                e.setValue(new ArrayList<>());
-                continue;
+            // --- LEFT TRIM ---
+            boolean leftWasFirst = true;
+            while (!rhs.isEmpty()) {
+                int first = rhs.get(0);
+                if (first == c) {
+                    rhs.remove(0); // explicit terminal
+                } else if (isSingleBlockOf(first, c, metadata, artificialTerminals)) {
+                    rhs.remove(0); // implicit terminal (via SingleBlock)
+                } else {
+                    break;
+                }
             }
 
-            // Get first and last elements
-            int X1 = rhs.get(0);
-            int X2 = rhs.get(rhs.size() - 1);
-
-            // Check if X1 and X2 are single blocks or terminals
-            boolean x1IsSingleBlockOrTerminal = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
-            boolean x2IsSingleBlockOrTerminal = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
-
-            // Case 2: Y has left run of c and X1 is single block/terminal
-            if (yMeta.getLeftmostTerminal() == c && x1IsSingleBlockOrTerminal) {
-                int leftRunLength = yMeta.getLeftRunLength();
-                List<Integer> newRhs = new ArrayList<>(rhs);
-                deleteLeftRun(newRhs, leftRunLength, metadata, artificialTerminals);
-                e.setValue(newRhs);
-                continue;
+            // --- RIGHT TRIM ---
+            boolean rightWasLast = true;
+            while (!rhs.isEmpty()) {
+                int last = rhs.get(rhs.size() - 1);
+                if (last == c) {
+                    rhs.remove(rhs.size() - 1); // explicit terminal
+                } else if (isSingleBlockOf(last, c, metadata, artificialTerminals)) {
+                    rhs.remove(rhs.size() - 1); // implicit terminal (via SingleBlock)
+                } else {
+                    break;
+                }
             }
 
-            // Case 3: Y has right run of c and X2 is single block/terminal
-            if (yMeta.getRightmostTerminal() == c && x2IsSingleBlockOrTerminal) {
-                int rightRunLength = yMeta.getRightRunLength();
-                List<Integer> newRhs = new ArrayList<>(rhs);
-                deleteRightRun(newRhs, rightRunLength, metadata, artificialTerminals);
-                e.setValue(newRhs);
-                continue;
-            }
-
-            // Case 4: Y witnesses the maximality of the block
-            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
-
-            // Count left run of c in context
-            int leftRunInContext = 0;
-            for (int i = 0; i < context.size() && context.get(i) == c; i++) {
-                leftRunInContext++;
-            }
-
-            // Count right run of c in context
-            int rightRunInContext = 0;
-            for (int i = context.size() - 1; i >= 0 && context.get(i) == c; i--) {
-                rightRunInContext++;
-            }
-
-            boolean hasContinuousRun = context.stream().allMatch(sym -> sym == c);
+            // --- Optional POPIN logic ---
+            // Apply context-based re-expansion if the deleted content belonged to a neighbor.
+            // This is your "R cr" and "cl R" rule based on position
 
             List<Integer> newRhs = new ArrayList<>();
 
-            if (hasContinuousRun && rhs.size() >= 2) {
-                if (!x1IsSingleBlockOrTerminal && !x2IsSingleBlockOrTerminal) {
-                    newRhs.add(X1);
-                    for (int j = 0; j < context.size(); j++) {
-                        newRhs.add(c);
-                    }
-                    newRhs.add(X2);
-                } else {
-                    newRhs.addAll(rhs); // fallback
-                }
-            } else {
-                for (int i = 0; i < rhs.size(); i++) {
-                    int sym = rhs.get(i);
+            for (int i = 0; i < rhs.size(); i++) {
+                int sym = rhs.get(i);
+                boolean isFirst = (i == 0);
+                boolean isLast = (i == rhs.size() - 1);
 
-                    if (i == 0 && leftRunInContext >= 2 && !x1IsSingleBlockOrTerminal) {
-                        newRhs.add(sym); // X1
-                        RuleMetadata x1Meta = metadata.getOrDefault(sym, dummyMeta());
-                        int alreadyCovered = x1Meta.getLeftRunLength();
-                        int toInsert = Math.max(0, leftRunInContext - alreadyCovered);
-                        for (int j = 0; j < toInsert; j++) newRhs.add(c);
-                    } else if (i == rhs.size() - 1 && rightRunInContext >= 2 && !x2IsSingleBlockOrTerminal) {
-                        RuleMetadata x2Meta = metadata.getOrDefault(sym, dummyMeta());
-                        int alreadyCovered = x2Meta.getRightRunLength();
-                        int toInsert = Math.max(0, rightRunInContext - alreadyCovered);
-                        for (int j = 0; j < toInsert; j++) newRhs.add(c);
-                        newRhs.add(sym); // X2
-                    } else {
-                        newRhs.add(sym);
+                // Pop-in on left
+                if (isVariable(sym, rules, artificialTerminals)) {
+                    RuleMetadata m = metadata.get(sym);
+                    if (m != null && m.getLeftmostTerminal() == c && !isFirst) {
+                        for (int j = 0; j < m.getLeftRunLength(); j++) {
+                            newRhs.add(c);
+                        }
+                    }
+                }
+
+
+                newRhs.add(sym);
+
+                // Pop-in on right
+                if (isVariable(sym, rules, artificialTerminals)) {
+                    RuleMetadata m = metadata.get(sym);
+                    if (m != null && m.getRightmostTerminal() == c && !isLast) {
+                        for (int j = 0; j < m.getRightRunLength(); j++) {
+                            newRhs.add(c);
+                        }
                     }
                 }
             }
@@ -756,73 +731,19 @@ private static void uncrossNonRepeating(
         }
     }
 
-
-    // Helper method to delete left run
-    private static void deleteLeftRun(
-            List<Integer> rhs,
-            int runLength,
+    private static boolean isSingleBlockOf(
+            int symbol,
+            int targetTerminal,
             Map<Integer, RuleMetadata> metadata,
             Set<Integer> artificialTerminals
     ) {
-        int deleted = 0;
-        Iterator<Integer> it = rhs.iterator();
-
-        while (it.hasNext() && deleted < runLength) {
-            int sym = it.next();
-
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                // Terminal or artificial - count as 1
-                it.remove();
-                deleted++;
-            } else {
-                // Variable - check its length
-                RuleMetadata symMeta = metadata.get(sym);
-                if (symMeta != null) {
-                    int symLength = symMeta.getLength();
-                    if (deleted + symLength <= runLength) {
-                        it.remove();
-                        deleted += symLength;
-                    } else {
-                        // Would exceed runLength, stop here
-                        break;
-                    }
-                }
-            }
+        if (symbol < 256 || artificialTerminals.contains(symbol)) {
+            return symbol == targetTerminal;
         }
-    }
-
-    // Helper method to delete right run
-    private static void deleteRightRun(
-            List<Integer> rhs,
-            int runLength,
-            Map<Integer, RuleMetadata> metadata,
-            Set<Integer> artificialTerminals
-    ) {
-        int deleted = 0;
-
-        // Work backwards through the list
-        for (int i = rhs.size() - 1; i >= 0 && deleted < runLength; i--) {
-            int sym = rhs.get(i);
-
-            if (isTerminalOrArtificial(sym, artificialTerminals)) {
-                // Terminal or artificial - count as 1
-                rhs.remove(i);
-                deleted++;
-            } else {
-                // Variable - check its length
-                RuleMetadata symMeta = metadata.get(sym);
-                if (symMeta != null) {
-                    int symLength = symMeta.getLength();
-                    if (deleted + symLength <= runLength) {
-                        rhs.remove(i);
-                        deleted += symLength;
-                    } else {
-                        // Would exceed runLength, stop here
-                        break;
-                    }
-                }
-            }
-        }
+        RuleMetadata m = metadata.get(symbol);
+        return m != null && m.isSingleBlock()
+                && m.getLeftmostTerminal() == targetTerminal
+                && m.getRightmostTerminal() == targetTerminal;
     }
 
 
