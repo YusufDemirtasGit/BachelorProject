@@ -3,111 +3,188 @@ package grammarextractor;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 public class Parser {
-    public static class GrammarRule<A, B> {
-        public A lhs;
-        public List<B> rhs;
-        public int length;
 
-        public GrammarRule(A lhs, List<B> rhs, int length) {
-            this.lhs = lhs;
-            this.rhs = rhs;
-            this.length = length;
-        }
-
-        @Override
-        public String toString() {
-            return "R" + lhs + ": " + rhs.stream().map(Object::toString).collect(Collectors.joining(","));
-        }
-    }
-
-    public record ParsedGrammar(Map<Integer, GrammarRule<Integer, Integer>> grammarRules, List<Integer> sequence) {
-        public static int getLength(Map<Integer, Parser.GrammarRule<Integer, Integer>> rules, int symbol) {
-            if (symbol < 256) return 1; // Terminal symbols are of length 1
-            Parser.GrammarRule<Integer, Integer> rule = rules.get(symbol);
-            if (rule == null) {
-                System.err.println("Tried to get length of undefined rule R" + symbol);
-                return 1;
-            }
-            return rule.length;
-        }
-    }
+    public record ParsedGrammar(Map<Integer, List<Integer>> grammarRules,
+                                List<Integer> sequence,
+                                Map<Integer, RuleMetadata> metadata) {}
 
     public static ParsedGrammar parseFile(Path inputFile) throws IOException {
-        Map<Integer, GrammarRule<Integer, Integer>> GrammarRules = new HashMap<>();
-        List<Integer> ParsedSequence = new ArrayList<>();
+        Map<Integer, List<Integer>> grammarRules = new HashMap<>();
+        List<Integer> sequence = new ArrayList<>();
         List<String> ruleLines = new ArrayList<>();
 
         try (Scanner scanner = new Scanner(inputFile)) {
             while (scanner.hasNextLine()) {
-                String inputStream = scanner.nextLine().trim();
-
-                if (inputStream.startsWith("R")) {
-                    ruleLines.add(inputStream); // Store rule lines for delayed processing
-                } else if (inputStream.startsWith("SEQ:")) {
-                    String[] sequence = inputStream.substring(4).split(",");
-                    for (String sequenceItem : sequence) {
-                        ParsedSequence.add(Integer.parseInt(sequenceItem.trim()));
+                String line = scanner.nextLine().trim();
+                if (line.startsWith("R")) {
+                    ruleLines.add(line);
+                } else if (line.startsWith("SEQ:")) {
+                    for (String token : line.substring(4).split(",")) {
+                        sequence.add(Integer.parseInt(token.trim()));
                     }
                 }
             }
         }
 
-        // First pass: store rules with placeholder lengths
         for (String ruleLine : ruleLines) {
             String[] split = ruleLine.substring(1).split(":");
-            int ruleName = Integer.parseInt(split[0]);
-            String[] rhsParts = split[1].split(",");
+            int ruleId = Integer.parseInt(split[0].trim());
+            String[] rhsTokens = split[1].split(",");
             List<Integer> rhs = new ArrayList<>();
-
-            for (String part : rhsParts) {
-                rhs.add(Integer.parseInt(part.trim()));
+            for (String token : rhsTokens) {
+                rhs.add(Integer.parseInt(token.trim()));
             }
-
-            // Temporarily set length to -1; it will be calculated in second pass
-            GrammarRules.put(ruleName, new GrammarRule<>(-1, rhs, -1));
+            grammarRules.put(ruleId, rhs);
         }
 
-        // Second pass: calculate length recursively
-        for (Map.Entry<Integer, GrammarRule<Integer, Integer>> entry : GrammarRules.entrySet()) {
-            GrammarRule<Integer, Integer> rule = entry.getValue();
-            int totalLength = 0;
+        // 1. Build a grammar with empty metadata
+        ParsedGrammar partialGrammar = new ParsedGrammar(grammarRules, sequence, Collections.emptyMap());
 
-            for (int symbol : rule.rhs) {
-                if (symbol < 256) {
-                    totalLength += 1;
-                } else {
-                    GrammarRule<Integer, Integer> subRule = GrammarRules.get(symbol);
-                    if (subRule != null) {
-                        totalLength += subRule.length;
-                    } else {
-                        System.err.println("Undefined rule referenced: R" + symbol);
-                        totalLength += 1; // fallback
-                    }
-                }
-            }
+        // 2. Compute metadata (empty set for artificial terminals)
+        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar, Collections.emptySet());
 
-            rule.length = totalLength;
-            rule.lhs = entry.getKey(); // ensure lhs matches rule ID
-        }
-
-        return new ParsedGrammar(GrammarRules, ParsedSequence);
+        // 3. Return full grammar
+        return new ParsedGrammar(grammarRules, sequence, metadata);
     }
 
+    private static Map<Integer, Set<Integer>> buildReverseUsageMap(Map<Integer, List<Integer>> rules) {
+        Map<Integer, Set<Integer>> reverse = new HashMap<>();
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            int user = entry.getKey();
+            for (int symbol : entry.getValue()) {
+                if (symbol >= 256) {
+                    reverse.computeIfAbsent(symbol, k -> new HashSet<>()).add(user);
+                }
+            }
+        }
+        return reverse;
+    }
 
-    public static void printGrammar(Parser.ParsedGrammar grammar) {
-        for (Map.Entry<Integer, Parser.GrammarRule<Integer, Integer>> entry : grammar.grammarRules().entrySet()) {
+    public static void printGrammar(ParsedGrammar grammar) {
+        for (Map.Entry<Integer, List<Integer>> entry : grammar.grammarRules().entrySet()) {
             int ruleId = entry.getKey();
-            Parser.GrammarRule<Integer, Integer> rule = entry.getValue();
-
-            String rhsString = rule.rhs.stream()
+            String rhs = entry.getValue().stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(","));
-            System.out.println("R" + ruleId + ": " + rhsString);
+            System.out.println("R" + ruleId + ": " + rhs);
+        }
+
+        System.out.print("SEQ:");
+        for (int i = 0; i < grammar.sequence().size(); i++) {
+            System.out.print(grammar.sequence().get(i));
+            if (i != grammar.sequence().size() - 1) System.out.print(",");
+        }
+        System.out.println();
+    }
+    public static final class RuleEditor {
+
+        private RuleEditor() {}
+
+        /** Insert a single symbol at the given index. */
+        public static void insert(Map<Integer, List<Integer>> rules, int ruleId, int index, int symbol) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            if (index < 0 || index > rhs.size()) {
+                throw new IndexOutOfBoundsException("index=" + index + " size=" + rhs.size());
+            }
+            rhs.add(index, symbol);
+        }
+
+        /** Insert many symbols starting at index. */
+        public static void insertAll(Map<Integer, List<Integer>> rules, int ruleId, int index, Collection<Integer> symbols) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            if (index < 0 || index > rhs.size()) {
+                throw new IndexOutOfBoundsException("index=" + index + " size=" + rhs.size());
+            }
+            rhs.addAll(index, symbols);
+        }
+
+        /** Append at the end. */
+        public static void append(Map<Integer, List<Integer>> rules, int ruleId, int symbol) {
+            getRhsOrThrow(rules, ruleId).add(symbol);
+        }
+
+        /** Prepend at the beginning. */
+        public static void prepend(Map<Integer, List<Integer>> rules, int ruleId, int symbol) {
+            getRhsOrThrow(rules, ruleId).add(0, symbol);
+        }
+
+        /** Replace the symbol at a specific position. */
+        public static void set(Map<Integer, List<Integer>> rules, int ruleId, int index, int newSymbol) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            rhs.set(checkIndex(index, rhs.size()), newSymbol);
+        }
+
+        /** Delete the element at index. */
+        public static int deleteAt(Map<Integer, List<Integer>> rules, int ruleId, int index) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            return rhs.remove(checkIndex(index, rhs.size()));
+        }
+
+        /** Delete a half-open range [fromInclusive, toExclusive). */
+        public static void deleteRange(Map<Integer, List<Integer>> rules, int ruleId, int fromInclusive, int toExclusive) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            if (fromInclusive < 0 || toExclusive > rhs.size() || fromInclusive > toExclusive) {
+                throw new IndexOutOfBoundsException(
+                        "range=[" + fromInclusive + "," + toExclusive + ") size=" + rhs.size());
+            }
+            rhs.subList(fromInclusive, toExclusive).clear();
+        }
+
+        /** Remove the first occurrence of symbol; returns true if something was removed. */
+        public static boolean removeFirst(Map<Integer, List<Integer>> rules, int ruleId, int symbol) {
+            return getRhsOrThrow(rules, ruleId).remove((Integer) symbol);
+        }
+
+        /** Remove all occurrences of symbol; returns how many were removed. */
+        public static int removeAll(Map<Integer, List<Integer>> rules, int ruleId, int symbol) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            int before = rhs.size();
+            rhs.removeIf(s -> s == symbol);
+            return before - rhs.size();
+        }
+
+        /** Swap two positions. */
+        public static void swap(Map<Integer, List<Integer>> rules, int ruleId, int i, int j) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            int size = rhs.size();
+            i = checkIndex(i, size);
+            j = checkIndex(j, size);
+            Collections.swap(rhs, i, j);
+        }
+
+        /** Move an element from 'from' to 'to' (indices after removal/insertion semantics). */
+        public static void move(Map<Integer, List<Integer>> rules, int ruleId, int from, int to) {
+            List<Integer> rhs = getRhsOrThrow(rules, ruleId);
+            int size = rhs.size();
+            from = checkIndex(from, size);
+            if (to < 0 || to >= size) {
+                throw new IndexOutOfBoundsException("to=" + to + " size=" + size);
+            }
+            int val = rhs.remove(from);
+            rhs.add(to, val);
+        }
+
+        /** Read-only view of an RHS (avoid external mutation). */
+        public static List<Integer> view(Map<Integer, List<Integer>> rules, int ruleId) {
+            return Collections.unmodifiableList(getRhsOrThrow(rules, ruleId));
+        }
+
+        private static List<Integer> getRhsOrThrow(Map<Integer, List<Integer>> rules, int ruleId) {
+            List<Integer> rhs = rules.get(ruleId);
+            if (rhs == null) {
+                throw new IllegalArgumentException("Unknown rule id: " + ruleId);
+            }
+            return rhs;
+        }
+
+        private static int checkIndex(int index, int size) {
+            if (index < 0 || index >= size) {
+                throw new IndexOutOfBoundsException("index=" + index + " size=" + size);
+            }
+            return index;
         }
     }
 
