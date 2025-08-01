@@ -12,7 +12,7 @@ import static grammarextractor.Main.formatSymbol;
 public class Recompressor {
 
 
-    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose, boolean initializeGrammar, boolean roundtrip) {
+    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose, boolean initializeGrammar, boolean roundtrip,String output) {
         if (verbose) {
             System.out.println("=== 🚀 Starting recompression ===");
             System.out.println("Max passes: " + maxPasses);
@@ -205,29 +205,15 @@ public class Recompressor {
         }
 
 
-        int totalRules = finalRules.size();
-        int rhsSymbols = finalRules.values().stream().mapToInt(List::size).sum() + sequence.size();
-        int length = roundtrip ? originalLength : rhsSymbols;
-        double compressionRatio = roundtrip ? (100.0 * (originalLength - rhsSymbols)) / originalLength : 0;
+
 
         if (verbose) {
             System.out.println("\n=== 📦 Final Grammar After " + counter + " Passes ===");
             Parser.printGrammar(finalGrammar);
 
-            System.out.println("\n=== 📊 Compression Stats ===");
-            if (roundtrip) {
-                System.out.println("Original length (decompressed): " + originalLength + " symbols");
-                System.out.println("Final grammar rules: " + totalRules);
-                System.out.println("Final total RHS symbols: " + rhsSymbols);
-                System.out.printf("Space saved (approx.): %.2f%%%n", compressionRatio);
-            } else {
-                System.out.println("Final grammar rules: " + totalRules);
-                System.out.println("Final total RHS symbols: " + rhsSymbols);
-            }
         }
 
-        try (FileWriter writer = new FileWriter("output.txt")) {
-            writer.write("=== 📦 Final Grammar After " + maxPasses + " Passes ===\n");
+        try (FileWriter writer = new FileWriter(output)) {
 
             StringBuilder sb = new StringBuilder();
             for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
@@ -243,9 +229,9 @@ public class Recompressor {
             sb.append("\n\n");
 
             writer.write(sb.toString());
-            if (verbose) System.out.println("💾 Final grammar and stats written to output.txt");
+            if (verbose) System.out.println("💾 Final grammar and stats written to "+ output );
         } catch (IOException e) {
-            if (verbose) System.err.println("❌ Failed to write output.txt: " + e.getMessage());
+            if (verbose) System.err.println("❌ Failed to write to "+output+ ":" + e.getMessage());
         }
     }
 
