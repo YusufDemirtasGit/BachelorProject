@@ -7,6 +7,166 @@
 
     public class Main {
         public static void main(String[] args) throws IOException, InterruptedException {
+            System.out.println("Welcome to the Grammar Extractor & Recompressor CLI!");
+            System.out.println("=============================");
+            System.out.println("This CLI is used to extract and recompress grammars from a file.");
+            System.out.println("Initializing...");
+
+            // List of filenames to check and update permissions for
+            String[] filesToCheck = { "encoder", "decoder"};
+
+            // Get current working directory
+            String currentDir = System.getProperty("user.dir");
+            System.out.println("Checking in directory: " + currentDir);
+
+            for (String filename : filesToCheck) {
+                File file = new File(currentDir, filename);
+                if (file.exists()) {
+                    System.out.println("Found: " + filename);
+
+                    boolean readable = file.setReadable(true);
+                    boolean writable = file.setWritable(true);
+
+                    System.out.println("  Set readable: " + readable);
+                    System.out.println("  Set writable: " + writable);
+                } else {
+                    System.out.println("Missing: " + filename);
+                }
+            }
+
+            if (args.length == 0) {
+                // No arguments: run interactive menu
+                roundtrip();
+                return;
+            }
+
+            // Simple CLI parsing
+            List<String> argList = Arrays.asList(args);
+            if (argList.contains("-h") || argList.contains("--help")) {
+                printHelp();
+                return;
+            }
+
+            if (argList.contains("-c")) {
+                String input = getArgValue(argList, "-InputFile");
+                if (input == null) {
+                    System.err.println("Missing -InputFile for -c (compression).");
+                    printHelp();
+                    return;
+                }
+                ProcessBuilder builder1 = new ProcessBuilder("./encoder", input);
+                builder1.inheritIO(); // Optional: should let the decoder print to console
+                Process process1 = builder1.start();
+                int exitCode1 = process1.waitFor();
+                if (exitCode1 == 0) {
+                    System.out.println("\nInput file translated successfully. The Resulting binary file is saved as:" + Path.of(input) + ".rp");
+                } else {
+                    System.err.println("\nEncoder failed with exit code " + exitCode1);
+                }
+                return;
+            }
+
+            if (argList.contains("-d")) {
+                String input = getArgValue(argList, "-InputFile");
+                String output = getArgValue(argList, "-OutputFile");
+                if (input == null || output == null) {
+                    System.err.println("Missing -InputFile or -OutputFile for -d (decompression).");
+                    printHelp();
+                    return;
+                }
+                ProcessBuilder builder2 = new ProcessBuilder("./decoder", input, output);
+                builder2.inheritIO(); // Optional: should let the decoder print to console
+                Process process2 = builder2.start();
+                int exitCode2 = process2.waitFor();
+                if (exitCode2 == 0) {
+                    System.out.println("\nBinary file translated successfully. The result is saved under input_translated.txt");
+                } else {
+                    System.err.println("\nDecoder failed with exit code " + exitCode2);
+                }
+                System.out.println("\nParsing the grammar from input_translated.txt");
+                Parser.ParsedGrammar parsedGrammar = Parser.parseFile(Paths.get("input_translated.txt"));
+
+                String outputstring = Decompressor.decompress(parsedGrammar);
+                try (PrintWriter out = new PrintWriter(output)) {
+                    out.println(outputstring);
+                    System.out.println("\nDecompression successful. Resulting text file is saved as output.txt");
+                } catch (FileNotFoundException e) {
+                    throw new FileNotFoundException();
+                }
+                return;
+            }
+
+            if (argList.contains("-e")) {
+                String input = getArgValue(argList, "-InputFile");
+                String output = getArgValue(argList, "-OutputFile");
+                String fromStr = getArgValue(argList, "-from");
+                String toStr = getArgValue(argList, "-to");
+
+                if (input == null || output == null || fromStr == null || toStr == null) {
+                    System.err.println("❌ Missing required arguments for -e (extract).");
+                    printHelp();
+                    return;
+                }
+
+                int from = Integer.parseInt(fromStr);
+                int to = Integer.parseInt(toStr);
+
+                return;
+            }
+
+            if (argList.contains("-r")) {
+                String input = getArgValue(argList, "-InputFile");
+                String output = getArgValue(argList, "-OutputFile");
+                String from = getArgValue(argList, "-from");
+                String to = getArgValue(argList, "-to");
+                String passesStr = getArgValue(argList, "-passes");
+                String verbosity = getArgValue(argList, "-verbosity");
+
+
+                if (input == null || output == null || passesStr == null || from == null || to == null) {
+                    System.err.println("❌ Missing required arguments for -r (recompress).");
+                    printHelp();
+                    return;
+                }
+
+
+
+                System.out.println("Parsing the grammar...");
+                Parser.ParsedGrammar grammar = Parser.parseFile(Paths.get(input));
+
+                Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar,Integer.parseInt(from), Integer.parseInt(to));
+                System.out.println("Excerpt extraction successful.");
+                System.out.println("Recompressing grammar...");
+                Recompressor.recompressNTimes(excerpt, Integer.parseInt(passesStr),Boolean.parseBoolean(verbosity),true,false,output);
+                System.out.println("Recompression successful. Resulting text file is saved as"+output);
+
+                return;
+            }
+
+            System.err.println("❌ Unknown command or missing arguments.");
+            printHelp();
+        }
+        private static String getArgValue(List<String> args, String key) {
+            int idx = args.indexOf(key);
+            if (idx != -1 && idx + 1 < args.size()) {
+                return args.get(idx + 1);
+            }
+            return null;
+        }
+
+        private static void printHelp() {
+            System.out.println("""
+        === Grammar Extractor & Recompressor CLI ===
+        Usage:
+          -h                            Show help
+          -c -InputFile <file> -OutputFile <file>     Compress file
+          -d -InputFile <file> -OutputFile <file>     Decompress file
+          -e -from <int> -to <int> -InputFile <file> -OutputFile <file>  Extract excerpt
+          -r -from <int> -to <int > -passes <int> -Input <file> -Output <file> Extract and Recompress file
+        """);
+        }
+
+        private static void roundtrip() throws IOException, InterruptedException {
             Scanner scanner = new Scanner(System.in);
             do {
                 System.out.println("\nWhich mode would you like to use?\n");
@@ -126,7 +286,7 @@
                             System.err.println("Test failed, Input and Output are not identical");
                         }
                         break;
-                    case 6:  //Not yet fully implemented
+                    case 6:
                         System.out.println("Enter the file name of the compressed grammar:");
                         String compressedGrammarFileName = scanner.nextLine().trim();
                         System.out.println("Enter the start pos for the grammar excerpt:");
@@ -149,9 +309,9 @@
 
                         //For debug purposes. The whole rule does not need to get dumped in the console in the final version
 
-    //                    for (int rule : excerpt.sequence()) {
-    //                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
-    //                    }
+                        //                    for (int rule : excerpt.sequence()) {
+                        //                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
+                        //                    }
                         break;
                     case 7:
                         System.out.println("\nPlease enter the input file you would like to compress:");
@@ -190,17 +350,7 @@
                             throw new FileNotFoundException();
                         }
                         break;
-                    // inside your Main class, in the switch over modes:
 
-//                    case 9:  // or whatever unused case number
-//                        System.out.print("Enter grammar file path for recompression test: ");
-//                        String recompressPath = scanner.nextLine().trim();
-//                        // Parse the grammar
-//                        Parser.ParsedGrammar toRecompress = Parser.parseFile(Path.of(recompressPath));
-//                        // Run the new Recompressor with verbose=true
-//                        Recompressor recompressor = new Recompressor(toRecompress, true);
-//                        recompressor.runRecompression();
-//                        break;
                     case 11:
                         System.out.print("\nEnter the path to a human-readable grammar file: ");
                         String grammarFile = scanner.nextLine().trim();
@@ -381,7 +531,7 @@
                     case 14:
                         Path grammarFile17 = Path.of("fibonacci.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 1000,true,true,true);
+                        Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
 
                         break;
                     case 15: {
@@ -421,6 +571,29 @@
                         Parser.printGrammar(original16);
 
 
+                        break;
+
+                    case 17:  //Not yet fully implemented
+                        System.out.println("Enter the file name of the compressed grammar:");
+                        String compressedGrammarFileName2 = scanner.nextLine().trim();
+                        System.out.println("Enter the start pos for the grammar excerpt:");
+                        int from2 = Integer.parseInt(scanner.nextLine().trim());
+                        System.out.println("Enter the end pos for the grammar excerpt:");
+                        int to2 = Integer.parseInt(scanner.nextLine().trim());
+
+                        System.out.println("Parsing the grammar...");
+                        Parser.ParsedGrammar grammar2 = Parser.parseFile(Paths.get(compressedGrammarFileName2));
+
+                        Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2);
+                        Extractor.writeGrammarToFile(excerpt2, "extracted_grammar.txt");
+                        Recompressor.recompressNTimes(excerpt2, 1000,true,true,true,"output.txt");
+
+
+                        //For debug purposes. The whole rule does not need to get dumped in the console in the final version
+
+                        //                    for (int rule : excerpt.sequence()) {
+                        //                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
+                        //                    }
                         break;
 
 
