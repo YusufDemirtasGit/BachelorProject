@@ -558,24 +558,6 @@ public class Recompressor {
     }
 
 
-    /**
-     * Make the bigram (c1,c2) explicit inside every RHS so that the later replacement
-     * can be done by a pure linear scan (no implicit crossings through nonterminals).
-     *
-     *  - If c1 != c2 (non-repeating):
-     *      • Strip leading c2 and trailing c1 terminals (or artificial terminals).
-     *      • For each variable Y on RHS, if leftmostTerminal(Y)==c2, expand it to c2 Y
-     *        (unless Y is first). If rightmostTerminal(Y)==c1, expand it to Y c1
-     *        (unless Y is last). If both hold and Y is in the middle, expand to c2 Y c1.
-     *
-     *  - If c1 == c2 (repeating):
-     *      • Delete explicit runs of c at the beginning and end of each RHS.
-     *      • Using the context (ρ(X′) · w_X · λ(X)), if the run of c starts at the very
-     *        beginning, push that run (>=2) to the left of the first variable.
-     *        If the run of c ends at the very end, push it (>=2) to the right of the last variable.
-     *
-     *  Finally, remove empty rules and their references.
-     */
 
     static void uncrossBigrams(
             int c1,
