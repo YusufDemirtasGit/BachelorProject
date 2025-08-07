@@ -634,7 +634,7 @@ private static void uncrossNonRepeating(
                 }
             }
 
-            // --- Add the symbol itself ---
+            // Add the symbol itself
             newRhs.add(sym);
 
             //Effective popInlet for the right side of the RHS.
