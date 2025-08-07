@@ -22,7 +22,7 @@ jobs:
           distribution: 'oracle'
 
       - name: Grant execute permission for Gradle
-        run: chmod +x ./gradlew
+        run: chmod +x gradlew
 
       - name: Generate timestamp
         id: timestamp
@@ -49,13 +49,6 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir release
-
-          # Check if encoder and decoder exist
-          if [ ! -f encoder ] || [ ! -f decoder ]; then
-            echo "Error: encoder or decoder not found!"
-            exit 1
-          fi
-
           cp encoder release/
           cp decoder release/
           chmod +x release/encoder release/decoder
@@ -63,17 +56,29 @@ jobs:
           JAR_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           cp build/libs/*.jar release/$JAR_NAME
 
+          # Create run.sh inside release folder
+          cat << 'EOF' > release/run.sh
+          #!/bin/bash
+
+          chmod +x encoder decoder
+          mkdir files
+          find . -type f -name "Zone.Identifier" -delete
+          java -jar grammarextractor_*.jar
+          EOF
+
+          chmod +x release/run.sh
           ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
 
           cd release
-          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME
+          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME run.sh
           cd ..
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release with automatic notes
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Beta-${{ steps.get_beta_number.outputs.next_beta }}
           name: Beta ${{ steps.get_beta_number.outputs.next_beta }}
           files: release/grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
