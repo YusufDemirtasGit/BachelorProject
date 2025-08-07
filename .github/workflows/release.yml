@@ -59,7 +59,7 @@ jobs:
           ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
 
           cd release
-          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME run.sh
+          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME 
           cd ..
 
       - name: Create GitHub Release with automatic notes
