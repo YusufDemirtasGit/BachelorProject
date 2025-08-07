@@ -322,7 +322,7 @@ public class RuleMetadata {
             return;
         }
 
-        System.out.println("=== 📊 Rule Metadata ===");
+        System.out.println("===  Rule Metadata ===");
         for (Map.Entry<Integer, RuleMetadata> entry : metadata.entrySet()) {
             int ruleId = entry.getKey();
             RuleMetadata meta = entry.getValue();
