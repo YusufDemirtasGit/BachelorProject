@@ -16,7 +16,7 @@ public class Parser {
         List<Integer> sequence = new ArrayList<>();
         List<String> ruleLines = new ArrayList<>();
 
-        try (Scanner scanner = new Scanner(inputFile)) {
+        try (Scanner scanner = new Scanner(inputFile.toFile())) {
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine().trim();
                 if (line.startsWith("R")) {
