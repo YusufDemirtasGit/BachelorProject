@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - 'master'  
+      - 'master'
 
 jobs:
   build:
@@ -22,12 +22,11 @@ jobs:
           distribution: 'oracle'
 
       - name: Grant execute permission for Gradle
-        run: chmod +x gradlew
-        
+        run: chmod +x ./gradlew
+
       - name: Generate timestamp
         id: timestamp
         run: |
-          TZ="Europe/Berlin" date
           timestamp=$(TZ="Europe/Berlin" date +%Y%m%d-%H%M%S)
           echo "timestamp=$timestamp" >> $GITHUB_OUTPUT
 
@@ -50,6 +49,13 @@ jobs:
       - name: Prepare release artifacts
         run: |
           mkdir release
+
+          # Check if encoder and decoder exist
+          if [ ! -f encoder ] || [ ! -f decoder ]; then
+            echo "Error: encoder or decoder not found!"
+            exit 1
+          fi
+
           cp encoder release/
           cp decoder release/
           chmod +x release/encoder release/decoder
@@ -57,14 +63,10 @@ jobs:
           JAR_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           cp build/libs/*.jar release/$JAR_NAME
 
-          # Confirm all permissions before archiving
-          ls -l release/
-
           ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
 
           cd release
-          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME 
-          ls -lh $ARCHIVE_NAME
+          tar -czvf $ARCHIVE_NAME encoder decoder $JAR_NAME
           cd ..
 
       - name: Create GitHub Release
