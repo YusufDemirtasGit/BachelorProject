@@ -56,17 +56,6 @@ jobs:
           JAR_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.jar
           cp build/libs/*.jar release/$JAR_NAME
 
-          # Create run.sh inside release folder
-          cat << 'EOF' > release/run.sh
-          #!/bin/bash
-
-          chmod +x encoder decoder
-          mkdir files
-          find . -type f -name "Zone.Identifier" -delete
-          java -jar grammarextractor_*.jar
-          EOF
-
-          chmod +x release/run.sh
           ARCHIVE_NAME=grammarextractor_${{ steps.timestamp.outputs.timestamp }}.tar.gz
 
           cd release
