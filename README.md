@@ -13,7 +13,8 @@ Installation:
 
 
 Usage:
-1) CLI 
+1) CLI :
+   java -jar grammarextractor_*.jar
 2) Interactive Window 
 
 Supported Systems:
