@@ -75,6 +75,8 @@ public class Extractor {
         // Build usage graph + copy reachable rules
         Parser.ParsedGrammar incomplete =
                 new Parser.ParsedGrammar(excerptRules, excerptSequence, Collections.emptyMap());
+        Map<Integer, Set<Integer>> usage = buildUsageGraph(allRules);
+        copyReachableRules(excerptSequence, allRules, excerptRules, usage);
 
         // Call with empty artificial terminal set
         Map<Integer, RuleMetadata> computedMeta =
