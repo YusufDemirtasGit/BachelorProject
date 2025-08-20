@@ -332,7 +332,7 @@
                         } else {
                             System.err.println("\nEncoder failed with exit code " + exitCode5);
                         }
-                        Path fileToTranslate4 = Paths.get(fileToCompress3 + "rp");
+                        Path fileToTranslate4 = Paths.get(fileToCompress3 + ".rp");
                         ProcessBuilder builder6 = new ProcessBuilder("./decoder", fileToTranslate4.toString(), "input_translated.txt");
                         builder6.inheritIO(); // Optional: should let the decoder print to console
                         Process process6 = builder6.start();
@@ -536,7 +536,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("fibonacci.txt");
+                        Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
 
