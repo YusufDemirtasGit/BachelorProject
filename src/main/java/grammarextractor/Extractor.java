@@ -11,7 +11,6 @@ public class Extractor {
         if (start < 0 || start > end || end > getUncompressedSize(parsedInput)) {
             throw new IllegalArgumentException("Invalid excerpt range.");
         }
-
         List<Integer> excerptSequence = new ArrayList<>();
         Map<Integer, List<Integer>> excerptRules = new HashMap<>();
         Map<Integer, List<Integer>> allRules = parsedInput.grammarRules();
@@ -27,6 +26,8 @@ public class Extractor {
             startIndex++;
         }
         int totalTraversedBeforeStart = totalTraversed;
+        System.out.println("Total traversed before start: " + totalTraversedBeforeStart);
+        System.out.println("start index: " + startIndex);
 
         // Find end boundary symbol
         totalTraversed = 0;
@@ -36,25 +37,29 @@ public class Extractor {
             endIndex++;
         }
         int totalTraversedBeforeEnd = totalTraversed;
+        System.out.println("Total traversed before end: " + totalTraversedBeforeEnd);
+        System.out.println("end index: " + endIndex);
 
         // Case: start and end within same symbol
         if (startIndex == endIndex) {
             int symbol = parsedInput.sequence().get(startIndex);
-            if (totalTraversedBeforeStart == start && totalTraversedBeforeEnd + getSymbolLength(parsedInput, symbol) == end) {
+            if (totalTraversedBeforeStart == start &&
+                    totalTraversedBeforeEnd + getSymbolLength(parsedInput, symbol) == end) {
                 excerptSequence.add(symbol);
             } else {
-                processExcerptSymbol(symbol, parsedInput, excerptRules, excerptSequence,
+                // Slice inside a single symbol
+                processSymbol(symbol, parsedInput, excerptRules, excerptSequence,
                         start - totalTraversedBeforeStart, end - totalTraversedBeforeStart);
             }
         } else {
-            // Process start
+            // Process start boundary
             int startSymbol = parsedInput.sequence().get(startIndex);
             if (totalTraversedBeforeStart == start) {
                 excerptSequence.add(startSymbol);
             } else {
-                processStart(startSymbol, parsedInput, excerptRules, excerptSequence,
+                processSymbol(startSymbol, parsedInput, excerptRules, excerptSequence,
                         start - totalTraversedBeforeStart,
-                        getSymbolLength(parsedInput, startSymbol));
+                        getSymbolLength(parsedInput, startSymbol)); // suffix of start symbol
             }
 
             // Fully included middle symbols
@@ -62,13 +67,14 @@ public class Extractor {
                 excerptSequence.add(parsedInput.sequence().get(i));
             }
 
-            // Process end
+            // Process end boundary
             int endSymbol = parsedInput.sequence().get(endIndex);
             if (totalTraversedBeforeEnd + getSymbolLength(parsedInput, endSymbol) == end) {
                 excerptSequence.add(endSymbol);
             } else {
-                processEnd(endSymbol, parsedInput, excerptRules, excerptSequence,
-                        end - totalTraversedBeforeEnd);
+                processSymbol(endSymbol, parsedInput, excerptRules, excerptSequence,
+                        0,
+                        end - totalTraversedBeforeEnd); // prefix of end symbol
             }
         }
 
@@ -78,71 +84,86 @@ public class Extractor {
         Map<Integer, Set<Integer>> usage = buildUsageGraph(allRules);
         copyReachableRules(excerptSequence, allRules, excerptRules, usage);
 
-        // Call with empty artificial terminal set
+        // Compute metadata on the excerpt
         Map<Integer, RuleMetadata> computedMeta =
                 RuleMetadata.computeAll(incomplete, Collections.emptySet());
 
-        return new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
+        Parser.ParsedGrammar unnormalized =
+                new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
+
+        // Normalize ids and recompute metadata on the normalized grammar
+        return normalizeRuleIds(unnormalized);
     }
 
-    private static void processStart(int symbol, Parser.ParsedGrammar input, Map<Integer, List<Integer>> excerptRules,
-                                     List<Integer> excerptSeq, int from, int to) {
-        if (symbol < 256) {
-            excerptSeq.add(symbol);
+    /**
+     * Emits the expansion slice of {@code symbol} covering the half-open interval [from, to)
+     * measured in uncompressed units (characters). It emits whole nonterminals when the slice
+     * fully covers them, and only recurses along the cut edges.
+     */
+    private static void processSymbol(
+            int symbol,
+            Parser.ParsedGrammar input,
+            Map<Integer, List<Integer>> excerptRules,
+            List<Integer> out,
+            int from,
+            int to
+    ) {
+        if (from >= to) return;
+
+        int symLen = getSymbolLength(input, symbol);
+
+        // If the requested slice exactly covers this symbol, emit it as-is.
+        if (from == 0 && to == symLen) {
+            out.add(symbol);
             return;
         }
 
+        // Terminal (length = 1): include iff slice overlaps [0,1)
+        if (symbol < 256) {
+            if (to > 0 && from < 1) out.add(symbol);
+            return;
+        }
+
+        // Nonterminal: recursively slice left/right children but keep whole children if fully covered.
         List<Integer> rhs = input.grammarRules().get(symbol);
         int left = rhs.get(0);
+        int right = rhs.get(1);
         int leftLen = getSymbolLength(input, left);
+        int rightLen = getSymbolLength(input, right); // used for exact-coverage checks
 
-        if (from < leftLen) {
-            processStart(left, input, excerptRules, excerptSeq, from, Math.min(to, leftLen));
-            if (to > leftLen) {
-                excerptSeq.add(rhs.get(1));
+        // Entire slice inside left child
+        if (to <= leftLen) {
+            if (from == 0 && to == leftLen) {
+                out.add(left);
+            } else {
+                processSymbol(left, input, excerptRules, out, from, to);
             }
-        } else {
-            processStart(rhs.get(1), input, excerptRules, excerptSeq, from - leftLen, to - leftLen);
-        }
-    }
-
-    private static void processEnd(int symbol, Parser.ParsedGrammar input, Map<Integer, List<Integer>> excerptRules,
-                                   List<Integer> excerptSeq, int to) {
-        if (symbol < 256) {
-            excerptSeq.add(symbol);
             return;
         }
 
-        List<Integer> rhs = input.grammarRules().get(symbol);
-        int left = rhs.get(0);
-        int leftLen = getSymbolLength(input, left);
-
-        if (to < leftLen) {
-            processEnd(left, input, excerptRules, excerptSeq, to);
-        } else if (to == leftLen) {
-            excerptSeq.add(left);
-        } else {
-            excerptSeq.add(left);
-            processEnd(rhs.get(1), input, excerptRules, excerptSeq, to - leftLen);
-        }
-    }
-
-    private static void processExcerptSymbol(int symbol, Parser.ParsedGrammar input, Map<Integer, List<Integer>> excerptRules,
-                                             List<Integer> excerptSeq, int from, int to) {
-        if (symbol < 256) {
-            excerptSeq.add(symbol);
+        // Entire slice inside right child
+        if (from >= leftLen) {
+            int rFrom = from - leftLen;
+            int rTo = to - leftLen;
+            if (rFrom == 0 && rTo == rightLen) {
+                out.add(right);
+            } else {
+                processSymbol(right, input, excerptRules, out, rFrom, rTo);
+            }
             return;
         }
 
-        List<Integer> rhs = input.grammarRules().get(symbol);
-        int left = rhs.get(0);
-        int leftLen = getSymbolLength(input, left);
-
-        if (from < leftLen) {
-            processExcerptSymbol(left, input, excerptRules, excerptSeq, from, Math.min(to, leftLen));
+        // Slice spans both children
+        if (from == 0) {
+            out.add(left); // left fully covered
+        } else {
+            processSymbol(left, input, excerptRules, out, from, leftLen);
         }
-        if (to > leftLen) {
-            processExcerptSymbol(rhs.get(1), input, excerptRules, excerptSeq, from - leftLen, to - leftLen);
+
+        if (to == leftLen + rightLen) {
+            out.add(right); // right fully covered
+        } else {
+            processSymbol(right, input, excerptRules, out, 0, to - leftLen);
         }
     }
 
@@ -158,7 +179,6 @@ public class Extractor {
         }
         return graph;
     }
-
 
     private static void copyReachableRules(List<Integer> sequence,
                                            Map<Integer, List<Integer>> allRules,
@@ -182,6 +202,63 @@ public class Extractor {
                 }
             }
         }
+    }
+
+    public static Parser.ParsedGrammar normalizeRuleIds(Parser.ParsedGrammar g) {
+        Map<Integer, List<Integer>> rules = g.grammarRules();
+        List<Integer> seq = g.sequence();
+
+        // Build usage graph of the *current* (excerpt) rules
+        Map<Integer, Set<Integer>> usage = buildUsageGraph(rules);
+
+        // Assign new ids in the order rules are *reached* from the sequence
+        Map<Integer, Integer> idMap = new HashMap<>();
+        int nextId = 256;
+
+        Deque<Integer> stack = new ArrayDeque<>();
+        for (int s : seq) if (s >= 256 && !idMap.containsKey(s)) stack.push(s);
+
+        while (!stack.isEmpty()) {
+            int cur = stack.pop();
+            if (idMap.containsKey(cur)) continue;
+            idMap.put(cur, nextId++);
+
+            for (int dep : usage.getOrDefault(cur, Collections.emptySet())) {
+                if (dep >= 256 && !idMap.containsKey(dep)) stack.push(dep);
+            }
+        }
+
+        // Ensure any isolated rules (not reached from seq) are also mapped deterministically
+        List<Integer> leftover = new ArrayList<>(rules.keySet());
+        Collections.sort(leftover);
+        for (int rid : leftover) {
+            if (rid >= 256 && !idMap.containsKey(rid)) {
+                idMap.put(rid, nextId++);
+            }
+        }
+
+        // Remap RHS and sequence
+        Map<Integer, List<Integer>> newRules = new HashMap<>();
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            int oldId = e.getKey();
+            int newId = oldId < 256 ? oldId : idMap.get(oldId);
+            List<Integer> remappedRhs = new ArrayList<>(e.getValue().size());
+            for (int sym : e.getValue()) {
+                remappedRhs.add(sym < 256 ? sym : idMap.get(sym));
+            }
+            newRules.put(newId, remappedRhs);
+        }
+
+        List<Integer> newSeq = new ArrayList<>(seq.size());
+        for (int sym : seq) newSeq.add(sym < 256 ? sym : idMap.get(sym));
+
+        // Recompute metadata on the normalized grammar
+        Parser.ParsedGrammar normalizedNoMeta =
+                new Parser.ParsedGrammar(newRules, newSeq, Collections.emptyMap());
+        Map<Integer, RuleMetadata> newMeta =
+                RuleMetadata.computeAll(normalizedNoMeta, Collections.emptySet());
+
+        return new Parser.ParsedGrammar(newRules, newSeq, newMeta);
     }
 
     public static int getUncompressedSize(Parser.ParsedGrammar parsedInput) {
