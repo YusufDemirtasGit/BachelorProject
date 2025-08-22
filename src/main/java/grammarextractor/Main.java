@@ -547,7 +547,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("fibonacci.txt");
+                        Path grammarFile17 = Path.of("test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
 

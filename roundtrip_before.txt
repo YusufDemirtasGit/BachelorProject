@@ -1,2 +1,7 @@
-abababaaaaabaacbbbbbbbbbbcbcbcbcbcbcbcbcbabababcbacababaab
+abababaaaaabaacbbbbbbbbbbcbcbcbcbcbcbcbcbabababcbacababaab (5 , 18(
 baaaaabaacbbb
+baaaaabaacbbb
+
+
+before recompression 19
+after recompression 16
