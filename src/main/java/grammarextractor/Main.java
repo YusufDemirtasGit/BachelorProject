@@ -26,9 +26,20 @@
 
                     boolean readable = file.setReadable(true);
                     boolean writable = file.setWritable(true);
+                    boolean executable = file.setExecutable(true);
 
-                    System.out.println("  Set readable: " + readable);
-                    System.out.println("  Set writable: " + writable);
+                    System.out.println("  Set readable:   " + readable);
+                    System.out.println("  Set writable:   " + writable);
+                    System.out.println("  Set executable: " + executable);
+
+                    // macOS Gatekeeper quarantine removal
+                    if (System.getProperty("os.name").toLowerCase().contains("mac")) {
+                        Process proc = new ProcessBuilder("xattr", "-d", "com.apple.quarantine", file.getAbsolutePath())
+                                .redirectErrorStream(true)
+                                .start();
+                        proc.waitFor();
+                        System.out.println("  Cleared macOS quarantine (if present)");
+                    }
                 } else {
                     System.out.println("Missing: " + filename);
                 }
@@ -536,7 +547,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("extracted_grammar.txt");
+                        Path grammarFile17 = Path.of("test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
 

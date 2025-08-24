@@ -88,13 +88,13 @@ public class RuleMetadata {
         List<Integer> processingOrder = new ArrayList<>();
         Queue<Integer> queue = new LinkedList<>();
 
-        // 1. Initialize in-degree and vocc maps for all non-terminals.
+        //Initialize in-degree and vocc maps for all non-terminals.
         for (int ruleId : rules.keySet()) {
             inDegree.put(ruleId, 0);
             vocc.put(ruleId, 0);
         }
 
-        // 2. Calculate the in-degree for each rule, which is the number of times it's used by other rules.
+        //Calculate the in-degree for each rule, which is the number of times it's used by other rules.
         for (List<Integer> rhs : rules.values()) {
             for (int symbol : rhs) {
                 if (inDegree.containsKey(symbol)) { // Check if the symbol is a non-terminal.
@@ -103,7 +103,7 @@ public class RuleMetadata {
             }
         }
 
-        // 3. Initialize the queue for topological sort with rules that have an in-degree of 0.
+        //Initialize the queue for topological sort with rules that have an in-degree of 0.
         // These are the "top-level" rules not used by any other rules.
         for (Map.Entry<Integer, Integer> entry : inDegree.entrySet()) {
             if (entry.getValue() == 0) {
@@ -111,7 +111,7 @@ public class RuleMetadata {
             }
         }
 
-        // 4. Build the topological processing order using Kahn's algorithm.
+        //Build the topological processing order using Kahn's algorithm.
         while (!queue.isEmpty()) {
             int u = queue.poll();
             processingOrder.add(u);
@@ -133,14 +133,14 @@ public class RuleMetadata {
             System.err.println("Warning: Cycle detected in grammar rules. Vocc calculation may be incomplete for rules in a cycle.");
         }
 
-        // 5. Initialize vocc with direct occurrences in the main sequence.
+        //Initialize vocc with direct occurrences in the main sequence.
         for (int symbol : sequence) {
             if (vocc.containsKey(symbol)) {
                 vocc.put(symbol, vocc.get(symbol) + 1);
             }
         }
 
-        // 6. Propagate counts through the grammar according to the topological order.
+        //Propagate counts through the grammar according to the topological order.
         for (int u : processingOrder) {
             int voccOfU = vocc.get(u);
             if (voccOfU == 0) {
