@@ -125,7 +125,7 @@
                 System.out.println("Parsing the grammar...");
                 Parser.ParsedGrammar grammar = Parser.parseFile(Paths.get(input));
                 System.out.println("Extracting excerpt [" + from + ", " + to + ")...");
-                Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar, from, to);
+                Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar, from, to,false);
                 System.out.println("Writing excerpt grammar to: " + output);
                 Extractor.writeGrammarToFile(excerpt, output);
                 System.out.println("✅ Extraction completed successfully.");
@@ -152,7 +152,7 @@
                 System.out.println("Parsing the grammar...");
                 Parser.ParsedGrammar grammar = Parser.parseFile(Paths.get(input));
 
-                Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar,Integer.parseInt(from), Integer.parseInt(to));
+                Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar,Integer.parseInt(from), Integer.parseInt(to),false);
                 System.out.println("Excerpt extraction successful.");
                 System.out.println("Recompressing grammar...");
                 Recompressor.recompressNTimes(excerpt, Integer.parseInt(passesStr),Boolean.parseBoolean(verbosity),true,false,output);
@@ -315,7 +315,7 @@
                         System.out.println("Parsing the grammar...");
                         Parser.ParsedGrammar grammar = Parser.parseFile(Paths.get(compressedGrammarFileName));
 
-                        Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar, from, to);
+                        Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar, from, to,false);
                         Extractor.writeGrammarToFile(excerpt, "extracted_grammar.txt");
                         String output6 = Decompressor.decompress(excerpt);
                         try (PrintWriter out = new PrintWriter("excerpt_output.txt")) {
@@ -547,7 +547,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("test_from_paper.txt");
+                        Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
 
@@ -573,7 +573,6 @@
                     case 16:
                         Path grammarFile16 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original16 = Parser.parseFile(grammarFile16);
-
                         Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(original16, new HashSet<>());
                         int ruleId = 257;
                         Parser.printGrammar(original16);
@@ -602,7 +601,7 @@
                         System.out.println("Parsing the grammar...");
                         Parser.ParsedGrammar grammar2 = Parser.parseFile(Paths.get(compressedGrammarFileName2));
 
-                        Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2);
+                        Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2,false);
                         Extractor.writeGrammarToFile(excerpt2, "extracted_grammar.txt");
                         Recompressor.recompressNTimes(excerpt2, 1000,true,true,true,"output.txt");
 

@@ -7,7 +7,7 @@ import java.util.*;
 
 public class Extractor {
 
-    public static Parser.ParsedGrammar extractExcerpt(Parser.ParsedGrammar parsedInput, int start, int end) {
+    public static Parser.ParsedGrammar extractExcerpt(Parser.ParsedGrammar parsedInput, int start, int end,boolean normalize) {
         if (start < 0 || start > end || end > getUncompressedSize(parsedInput)) {
             throw new IllegalArgumentException("Invalid excerpt range.");
         }
@@ -92,14 +92,11 @@ public class Extractor {
                 new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
 
         // Normalize ids and recompute metadata on the normalized grammar
-        return normalizeRuleIds(unnormalized);
+        if(normalize) return normalizeRuleIds(unnormalized);
+        else return unnormalized;
     }
 
-    /**
-     * Emits the expansion slice of {@code symbol} covering the half-open interval [from, to)
-     * measured in uncompressed units (characters). It emits whole nonterminals when the slice
-     * fully covers them, and only recurses along the cut edges.
-     */
+
     private static void processSymbol(
             int symbol,
             Parser.ParsedGrammar input,

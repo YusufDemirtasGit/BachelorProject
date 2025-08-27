@@ -873,53 +873,30 @@ private static void uncrossNonRepeating(
         }
     }
     //Unnecessarily complex way to get the most frequent bigram.
-    //As a tie breaker decide which one to keep in following order:
-    //Repeating Bigrams > Containing Artificial Terminals > Lexicographical Order.
+    //As a tie breaker decide which one to keep according to Lexicographical Order.
     public static Pair<Integer, Integer> getMostFrequentBigram(
             Map<Pair<Integer, Integer>, Integer> frequencies,
-            Set<Integer> artificialTerminals
+            Set<Integer> artificialTerminals // unused
     ) {
-        Pair<Integer, Integer> bestBigram = null;
-        int maxCount = -1;
+        Pair<Integer, Integer> best = null;
+        int bestCount = Integer.MIN_VALUE;
 
-        for (Map.Entry<Pair<Integer, Integer>, Integer> entry : frequencies.entrySet()) {
-            Pair<Integer, Integer> bigram = entry.getKey();
-            int count = entry.getValue();
+        for (Map.Entry<Pair<Integer, Integer>, Integer> e : frequencies.entrySet()) {
+            Pair<Integer, Integer> bg = e.getKey();
+            int count = e.getValue();
 
-            if (count < maxCount) continue;
-
-            boolean isRepeating = bigram.first.equals(bigram.second);
-            boolean hasArtificial = artificialTerminals.contains(bigram.first) || artificialTerminals.contains(bigram.second);
-
-            if (count > maxCount) {
-                // New highest frequency
-                maxCount = count;
-                bestBigram = bigram;
-            } else {
-                // Tie on frequency — apply priority rules
-                boolean currentIsRepeating = bestBigram.first.equals(bestBigram.second);
-                boolean currentHasArtificial = artificialTerminals.contains(bestBigram.first) || artificialTerminals.contains(bestBigram.second);
-
-                if (isRepeating && !currentIsRepeating) {
-                    bestBigram = bigram;
-                } else if (!isRepeating && currentIsRepeating) {
-                    // keep current
-                } else if (hasArtificial && !currentHasArtificial) {
-                    bestBigram = bigram;
-                } else if (!hasArtificial && currentHasArtificial) {
-                    // keep current
-                } else {
-                    // fallback: lexicographical order
-                    if (bigram.first < bestBigram.first ||
-                            (bigram.first.equals(bestBigram.first) && bigram.second < bestBigram.second)) {
-                        bestBigram = bigram;
-                    }
-                }
+            if (count > bestCount
+                    || (count == bestCount
+                    && (best == null
+                    || bg.first < best.first
+                    || (bg.first.equals(best.first) && bg.second < best.second)))) {
+                best = bg;
+                bestCount = count;
             }
         }
-
-        return bestBigram;
+        return best;
     }
+
 
 
 
