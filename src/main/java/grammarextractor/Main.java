@@ -613,7 +613,44 @@
                         //                    }
                         break;
 
+                    case 18:
+                        System.out.println("Enter the file name of the compressed grammar:");
+                        String compressedGrammarFileName18 = scanner.nextLine().trim();
+                        // Step 1: Parse grammar
+                        Parser.ParsedGrammar grammar18 = Parser.parseFile(Paths.get(compressedGrammarFileName18));
 
+                        // Step 2: Compute metadata
+                        Map<Integer, RuleMetadata> metadata2 = RuleMetadata.computeAll(grammar18, new HashSet<>());
+
+                        // Step 3: Decompress BEFORE
+                        String before = Decompressor.decompress(grammar18);
+                        System.out.println("=== BEFORE uncross ===");
+                        System.out.println(before);
+                        Parser.printGrammar(grammar18);
+
+                        // Step 4: Run uncross
+                        Map<Integer, List<Integer>> rules = new LinkedHashMap<>(grammar18.grammarRules());
+                        List<Integer> sequence = new ArrayList<>(grammar18.sequence());
+                        Recompressor.uncrossBigrams(97,97, rules, metadata2, new HashSet<>());
+
+                        // Build combined grammar again
+                        Parser.ParsedGrammar afterGrammar = new Parser.ParsedGrammar(rules, sequence,
+                                RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), new HashSet<>()));
+
+                        // Step 5: Decompress AFTER
+                        String after = Decompressor.decompress(afterGrammar);
+                        System.out.println("=== AFTER uncross ===");
+                        System.out.println(after);
+                        Parser.printGrammar(afterGrammar);
+
+                        // Step 6: Check equality
+                        if (before.equals(after)) {
+                            System.out.println("✅ Roundtrip successful: uncross preserved string");
+                        } else {
+                            System.err.println("❌ Roundtrip failed: mismatch between before and after");
+                        }
+
+                        return;
                     case 99:
                         System.exit(0);
                         break;
