@@ -12,6 +12,7 @@ public class Parser {
                                 Map<Integer, RuleMetadata> metadata) {}
 
     public static ParsedGrammar parseFile(Path inputFile) throws IOException {
+        long startTime = System.nanoTime();
         Map<Integer, List<Integer>> grammarRules = new HashMap<>();
         List<Integer> sequence = new ArrayList<>();
         List<String> ruleLines = new ArrayList<>();
@@ -46,38 +47,51 @@ public class Parser {
         // 2. Compute metadata (empty set for artificial terminals)
         Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar, Collections.emptySet());
 
+        long endTime   = System.nanoTime();
+        long totalTime = endTime - startTime;
+        System.out.println("Time required for in total" + ":" +totalTime/1000000 + "ms");
+
+
         // 3. Return full grammar
         return new ParsedGrammar(grammarRules, sequence, metadata);
     }
 
-    private static Map<Integer, Set<Integer>> buildReverseUsageMap(Map<Integer, List<Integer>> rules) {
-        Map<Integer, Set<Integer>> reverse = new HashMap<>();
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int user = entry.getKey();
-            for (int symbol : entry.getValue()) {
-                if (symbol >= 256) {
-                    reverse.computeIfAbsent(symbol, k -> new HashSet<>()).add(user);
-                }
-            }
-        }
-        return reverse;
+    /**
+     * Compute the size of a grammar.
+     * Size = total number of symbols in all rule RHSs + total number of symbols in the sequence.
+     */
+    public static int sizeOfGrammar(ParsedGrammar grammar) {
+        int rhsCount = grammar.grammarRules().values().stream()
+                .mapToInt(List::size)
+                .sum();
+        int seqCount = grammar.sequence().size();
+        return rhsCount + seqCount;
     }
 
-    public static void printGrammar(ParsedGrammar grammar) {
+
+    /** New: return a printable string for a grammar (mirrors printGrammar output). */
+    public static String grammarToString(ParsedGrammar grammar) {
+        StringBuilder sb = new StringBuilder();
         for (Map.Entry<Integer, List<Integer>> entry : grammar.grammarRules().entrySet()) {
             int ruleId = entry.getKey();
             String rhs = entry.getValue().stream()
                     .map(Object::toString)
                     .collect(Collectors.joining(","));
-            System.out.println("R" + ruleId + ": " + rhs);
+            sb.append("R").append(ruleId).append(": ").append(rhs).append('\n');
         }
 
-        System.out.print("SEQ:");
+        sb.append("SEQ:");
         for (int i = 0; i < grammar.sequence().size(); i++) {
-            System.out.print(grammar.sequence().get(i));
-            if (i != grammar.sequence().size() - 1) System.out.print(",");
+            sb.append(grammar.sequence().get(i));
+            if (i != grammar.sequence().size() - 1) sb.append(",");
         }
-        System.out.println();
+        sb.append('\n');
+        return sb.toString();
+    }
+
+
+    public static void printGrammar(ParsedGrammar grammar) {
+        System.out.print(grammarToString(grammar));
     }
     public static final class RuleEditor {
 

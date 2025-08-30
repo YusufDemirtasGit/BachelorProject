@@ -4,6 +4,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static grammarextractor.Main.formatSymbol;
@@ -13,31 +14,41 @@ public class Recompressor {
 
 
     public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose, boolean initializeGrammar, boolean roundtrip, String output) {
-        if (verbose) {
-            System.out.println("===  Starting recompression ===");
-            System.out.println("Max passes: " + maxPasses);
-            System.out.println("Original grammar:");
-            Parser.printGrammar(originalGrammar);
-            System.out.println("================================\n");
-        }
+        StringBuilder logBuilder = new StringBuilder(); // collect all logs
 
+        // helper for logging
+        Consumer<String> log = msg -> {
+            logBuilder.append(msg).append("\n");
+            if (verbose) System.out.println(msg);
+        };
+
+        log.accept("===  Starting recompression ===");
+        log.accept("Max passes: " + maxPasses);
+        log.accept("Original grammar:");
+        log.accept(Parser.grammarToString(originalGrammar)); // you need a method returning grammar as String
+        log.accept("================================\n");
+
+        long startTime = System.nanoTime();
         Parser.ParsedGrammar initialized;
         Set<Integer> artificialTerminals = new HashSet<>();
         Map<Integer, List<Integer>> artificialRules = new LinkedHashMap<>();
 
+        if (maxPasses == 0) { maxPasses = 999999999; }
+
         if (initializeGrammar) {
-            if (verbose) System.out.println(" Initializing grammar with sentinels...");
+            log.accept(" Initializing grammar with sentinels...");
             InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
             initialized = init.grammar;
             artificialTerminals.addAll(init.artificialTerminals);
-            if (verbose) {
-                System.out.println(" Initialization complete. Starting grammar:");
-                Parser.printGrammar(new Parser.ParsedGrammar(initialized.grammarRules(), initialized.sequence(), Collections.emptyMap()));
-                System.out.println();
-            }
+            log.accept(" Initialization complete. Starting grammar:");
+            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(initialized.grammarRules(), initialized.sequence(), Collections.emptyMap())));
+            int size = Parser.sizeOfGrammar(initialized);
+            log.accept("Grammar size = " + size);
         } else {
-            if (verbose) System.out.println(" Skipping grammar initialization...");
+            log.accept(" Skipping grammar initialization...");
             initialized = originalGrammar;
+            int size = Parser.sizeOfGrammar(initialized);
+            log.accept("Grammar size = " + size);
         }
 
         Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
@@ -46,59 +57,50 @@ public class Recompressor {
         int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
         AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
 
-        if (verbose) System.out.println(" Initial nextRuleId = " + initialMaxId);
+        log.accept(" Initial nextRuleId = " + initialMaxId);
 
-        if (verbose) System.out.println(" Computing initial metadata...");
+        log.accept(" Computing initial metadata...");
         Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
                 new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
                 artificialTerminals
         );
-        if (verbose) {
-            RuleMetadata.printMetadata(metadata);
-            System.out.println("================================");
-        }
+        log.accept(RuleMetadata.metadataToString(metadata)); // implement a toString if not present
+        log.accept("================================");
 
         String before = null;
         int originalLength = 0;
         if (roundtrip || verbose) {
             before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
             originalLength = before.length();
-            if (verbose) {
-                System.out.println("===  Decompressed BEFORE All Passes ===\n" + before);
-                System.out.println("Original length: " + originalLength + " symbols");
-            }
+            log.accept("===  Decompressed BEFORE All Passes ===\n" + before);
+            log.accept("Original length: " + originalLength + " symbols");
         }
 
         int counter = 1;
         for (int pass = 1; pass <= maxPasses; pass++) {
-            if (verbose) {
-                System.out.println("\n\n================================");
-                System.out.println("===  Recompression Pass " + pass + " ===");
-                System.out.println("================================");
-            }
+            long startTime2 = System.nanoTime();
+            log.accept("\n\n================================");
+            log.accept("===  Recompression Pass " + pass + " ===");
+            log.accept("================================");
 
-            if (verbose) {
-                System.out.println(" Current metadata before pass " + pass + ":");
-                RuleMetadata.printMetadata(metadata);
-                System.out.println("\n Current grammar (excluding artificial rules):");
-                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-            }
+            log.accept(" Current metadata before pass " + pass + ":");
+            log.accept(RuleMetadata.metadataToString(metadata));
+            log.accept("\n Current grammar (excluding artificial rules):");
+            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
-            if (verbose) System.out.println("\n Computing bigram frequencies...");
+            log.accept("\n Computing bigram frequencies...");
             Map<Pair<Integer, Integer>, Integer> frequencies =
                     computeBigramFrequencies(new Parser.ParsedGrammar(rules, sequence, metadata), artificialTerminals, verbose);
-            if (verbose) {
-                System.out.println("Bigram frequencies computed: " + frequencies);
-            }
+            log.accept("Bigram frequencies computed: " + frequencies);
 
             if (frequencies.isEmpty()) {
-                if (verbose) System.out.println(" No bigrams found. Stopping recompression.");
+                log.accept(" No bigrams found. Stopping recompression.");
                 break;
             }
 
             Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
             if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
-                System.out.println("No more compressible bigrams (all <= 1 occurrence).");
+                log.accept("No more compressible bigrams (all <= 1 occurrence).");
                 break;
             }
 
@@ -107,114 +109,84 @@ public class Recompressor {
             int count = frequencies.get(bigram);
 
             int newRuleId = nextRuleId.getAndIncrement();
-            if (verbose) {
-                System.out.printf(" Most frequent bigram: (%s, %s) → R%d [%d occurrences]%n",
-                        formatSymbol(c1), formatSymbol(c2), newRuleId, count);
-                System.out.println("Next available rule ID updated to: " + nextRuleId.get());
-            }
+            log.accept(String.format(" Most frequent bigram: (%s, %s) → R%d [%d occurrences]",
+                    formatSymbol(c1), formatSymbol(c2), newRuleId, count));
+            log.accept("Next available rule ID updated to: " + nextRuleId.get());
 
-            if (verbose) System.out.println("Updating metadata...");
-            metadata = RuleMetadata.computeAll(
-                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                    artificialTerminals
-            );
+            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
 
-            if (verbose) System.out.println("Uncrossing bigram in main rules...");
+            log.accept("Uncrossing bigram in main rules...");
             uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
-            if (verbose) {
-                System.out.println("After uncrossing (main rules only):");
-                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-            }
+            log.accept("After uncrossing (main rules only):");
+            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
-            if (verbose) System.out.println("Replacing explicit bigram occurrences with R" + newRuleId + "...");
+            log.accept("Replacing explicit bigram occurrences with R" + newRuleId + "...");
             replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
-            if (verbose) {
-                System.out.println("After replacement (main rules only):");
-                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-            }
+            log.accept("After replacement (main rules only):");
+            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
             artificialRules.put(newRuleId, List.of(c1, c2));
             artificialTerminals.add(newRuleId);
-                System.out.printf("Stored R%d as artificial rule (c1=%s, c2=%s)%n", newRuleId, formatSymbol(c1), formatSymbol(c2));
+            log.accept(String.format("Stored R%d as artificial rule (c1=%s, c2=%s)", newRuleId, formatSymbol(c1), formatSymbol(c2)));
 
-
-            if (verbose) System.out.println("Updating metadata...");
-            metadata = RuleMetadata.computeAll(
-                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                    artificialTerminals
-            );
-            if (verbose) {
-                System.out.println("Updated metadata:");
-                RuleMetadata.printMetadata(metadata);
-            }
+            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+            log.accept("Updated metadata:");
+            log.accept(RuleMetadata.metadataToString(metadata));
 
             removeRedundantRules(rules, sequence);
-            if (verbose) {
-                System.out.println("After normalization (main rules only):");
-                Parser.printGrammar(new Parser.ParsedGrammar(rules, sequence, metadata));
-            }
+            log.accept("After normalization (main rules only):");
+            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
-            if (verbose) System.out.println("Updating metadata...");
-            metadata = RuleMetadata.computeAll(
-                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                    artificialTerminals
-            );
+            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+
+            long endTime2   = System.nanoTime();
+            log.accept("Time required for Pass" + pass + ":" + (endTime2 - startTime2)/1_000_000 + "ms");
 
             if (roundtrip) {
-                if (verbose) System.out.println("Performing roundtrip check...");
+                log.accept("Performing roundtrip check...");
                 String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
                 if (!before.equals(after)) {
-                    System.out.println("Roundtrip mismatch detected! Stopping at pass " + pass);
+                    log.accept("Roundtrip mismatch detected! Stopping at pass " + pass);
                     break;
                 }
                 before = after;
-                System.out.println("Roundtrip check passed for pass " + pass + ".");
+                log.accept("Roundtrip check passed for pass " + pass + ".");
             }
 
             counter++;
         }
 
         removeRedundantRules(rules, sequence);
-        if (verbose) System.out.println("Updating metadata...");
-        metadata = RuleMetadata.computeAll(
-                new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                artificialTerminals
-        );
-        if (verbose) {
-            System.out.println("Updated metadata:");
-            RuleMetadata.printMetadata(metadata);
-        }
+        metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+        log.accept("Updated metadata:");
+        log.accept(RuleMetadata.metadataToString(metadata));
 
-
-
-
-        if (verbose) System.out.println("\n=== Finalizing Grammar (adding artificial rules) ===");
+        log.accept("\n=== Finalizing Grammar (adding artificial rules) ===");
         Map<Integer, List<Integer>> finalRules = new LinkedHashMap<>(rules);
         finalRules.putAll(artificialRules);
         Parser.ParsedGrammar finalGrammar = new Parser.ParsedGrammar(finalRules, sequence, metadata);
         finalGrammar = normalizeGrammar(finalGrammar);
 
         if (roundtrip) {
-            if (verbose) System.out.println("Performing final roundtrip comparison...");
+            log.accept("Performing final roundtrip comparison...");
             String finalResult = Decompressor.decompress(finalGrammar);
             if (before != null && !finalResult.equals(before)) {
-                System.out.println("Final roundtrip mismatch detected after all passes!");
+                log.accept("Final roundtrip mismatch detected after all passes!");
             } else {
-                System.out.println("Final roundtrip result matches original input.");
+                log.accept("Final roundtrip result matches original input.");
             }
         }
 
+        log.accept("\n=== Final Grammar After " + counter + " Passes ===");
+        log.accept(Parser.grammarToString(finalGrammar));
+        int size = Parser.sizeOfGrammar(finalGrammar);
+        log.accept("Grammar size = " + size);
 
+        long endTime   = System.nanoTime();
+        log.accept("Time required in total: " + (endTime - startTime)/1_000_000 + "ms");
 
-
-        if (verbose) {
-            System.out.println("\n=== Final Grammar After " + counter + " Passes ===");
-            Parser.printGrammar(finalGrammar);
-
-        }
-
+        // Write final grammar to main output
         try (FileWriter writer = new FileWriter(output)) {
-
             StringBuilder sb = new StringBuilder();
             for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
                 sb.append("R").append(entry.getKey()).append(": ");
@@ -227,11 +199,18 @@ public class Recompressor {
                 if (i != finalGrammar.sequence().size() - 1) sb.append(",");
             }
             sb.append("\n\n");
-
             writer.write(sb.toString());
-            if (verbose) System.out.println("Final grammar and stats written to "+ output );
+            log.accept("Final grammar and stats written to "+ output );
         } catch (IOException e) {
-            if (verbose) System.err.println("Failed to write to "+output+ ":" + e.getMessage());
+            log.accept("Failed to write to "+output+ ":" + e.getMessage());
+        }
+
+        // Always dump logs
+        String logFile = output + "_logs.txt";
+        try (FileWriter logWriter = new FileWriter(logFile)) {
+            logWriter.write(logBuilder.toString());
+        } catch (IOException e) {
+            System.err.println("Failed to write logs to "+logFile+ ":" + e.getMessage());
         }
     }
 
@@ -872,7 +851,8 @@ private static void uncrossNonRepeating(
             entry.setValue(out);
         }
     }
-    //Unnecessarily complex way to get the most frequent bigram.
+
+
     //As a tie breaker decide which one to keep according to Lexicographical Order.
     public static Pair<Integer, Integer> getMostFrequentBigram(
             Map<Pair<Integer, Integer>, Integer> frequencies,

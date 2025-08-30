@@ -340,4 +340,30 @@ public class RuleMetadata {
         }
         System.out.println("========================\n");
     }
+    public static String metadataToString(Map<Integer, RuleMetadata> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return "No metadata available.\n";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("===  Rule Metadata ===\n");
+        for (Map.Entry<Integer, RuleMetadata> entry : metadata.entrySet()) {
+            int ruleId = entry.getKey();
+            RuleMetadata meta = entry.getValue();
+            sb.append(String.format(
+                    "R%d: vocc=%d, length=%d, leftmost=%s, rightmost=%s, singleBlock=%s, leftRun=%d, rightRun=%d%n",
+                    ruleId,
+                    meta.getVocc(),
+                    meta.getLength(),
+                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
+                    meta.isSingleBlock(),
+                    meta.getLeftRunLength(),
+                    meta.getRightRunLength()
+            ));
+        }
+        sb.append("========================\n\n");
+        return sb.toString();
+    }
+
 }

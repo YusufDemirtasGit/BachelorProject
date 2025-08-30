@@ -188,19 +188,24 @@
             Scanner scanner = new Scanner(System.in);
             do {
                 System.out.println("\nWhich mode would you like to use?\n");
-                System.out.println("1. Compress");
-                System.out.println("2. Compress(Gonzales) not yet implemented");
-                System.out.println("3. Decompress");
-                System.out.println("4. Decompress(Gonzales) not yet implemented");
-                System.out.println("5. Roundtrip");
-                System.out.println("6. Extract Excerpt(Not Yet fully implemented)");
-                System.out.println("7. Create human readable format");
-                System.out.println("8. Decompress Human readable format back into string");
-                System.out.println("9. PopInlet Roundtrip");
-                System.out.println("10. PopOutlet Roundtrip");
-                System.out.println("11. Metadata Roundtrip");
-                System.out.println("12. Frequency Roundtrip");
-                System.out.println("13. Roundtrip Frequency Comparison");
+                System.out.println("1.  Compress");
+                System.out.println("2.  Compress (Gonzales) — not implemented");
+                System.out.println("3.  Decompress");
+                System.out.println("4.  Decompress (Gonzales) — not implemented");
+                System.out.println("5.  Roundtrip (random or file)");
+                System.out.println("6.  Extract excerpt");
+                System.out.println("7.  Create human-readable grammar from .rp");
+                System.out.println("8.  Decompress human-readable grammar back into string");
+                System.out.println("9.  PopInlet roundtrip — not implemented");
+                System.out.println("10. PopOutlet roundtrip — not implemented");
+                System.out.println("11. Metadata roundtrip");
+                System.out.println("12. Recompression Frequency Calculation roundtrip");
+                System.out.println("13. Roundtrip frequency comparison(naive vs recomp)");
+                System.out.println("14. Recompress N times (stress test)");
+                System.out.println("15. Naive bigram frequencies from decompressed text");
+                System.out.println("16. Rule editor demo (insert/set and recompute metadata)");
+                System.out.println("17. Excerpt → recompress (experimental)");
+                System.out.println("18. Uncross bigrams test ");
                 System.out.println("99. Exit");
 
                 System.out.print("Enter your choice: ");
@@ -400,7 +405,7 @@
                                 );
                             }
 
-                            System.out.println("\n✅ Metadata roundtrip completed.");
+                            System.out.println("\n Metadata roundtrip completed.");
 
                         } catch (Exception e) {
                             System.err.println("An error occurred during metadata roundtrip: " + e.getMessage());
@@ -466,7 +471,7 @@
                             }
 
                         } catch (Exception e) {
-                            System.err.println("❌ Error during frequency roundtrip: " + e.getMessage());
+                            System.err.println(" Error during frequency roundtrip: " + e.getMessage());
                             e.printStackTrace();
                         }
                         break;
@@ -475,26 +480,26 @@
                         Path grammarFile13 = Path.of("LoremIpsum.txt");
                         Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
 
-                        // ✅ Step 1: Wrap with sentinels and create binary grammar
+                        //  Step 1: Wrap with sentinels and create binary grammar
                         Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(original);
                         Parser.ParsedGrammar initialized = init.grammar();
                         Set<Integer> artificial = init.artificialTerminals(); // Gets the set from initialization
 
-                        // ✅ Step 2: Compute metadata with artificial terminals
+                        //  Step 2: Compute metadata with artificial terminals
                         Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(initialized, artificial);
                         Parser.ParsedGrammar parsed = new Parser.ParsedGrammar(
                                 initialized.grammarRules(), initialized.sequence(), newMetadata);
 
                         System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
 
-                        // ✅ Step 4: Compute compressed-space frequency map (new logic)
+                        //  Step 4: Compute compressed-space frequency map (new logic)
                         Map<Pair<Integer, Integer>, Integer> advancedFreqs =
                                 Recompressor.computeBigramFrequencies(parsed, artificial,false);
 
-                        // ✅ Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(parsed,false,false);
+                        //  Step 5: Compute naive decompression-based frequency map
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(parsed,false,false);
 
-                        // ✅ Step 6: Compare all bigrams
+                        //  Step 6: Compare all bigrams
                         Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
                         allBigrams.addAll(advancedFreqs.keySet());
                         allBigrams.addAll(naiveFreqs.keySet());
@@ -513,7 +518,7 @@
                             }
                         }
 
-                        // ✅ Step 7: Final Output
+                        //  Step 7: Final Output
                         System.out.println("=== Advanced Frequency Roundtrip Results ===");
                         System.out.println(advancedFreqs);
 
@@ -538,18 +543,18 @@
                         }
 
                         if (!mismatchFound) {
-                            System.out.println("✅ All bigram frequencies match between compressed and naive method!");
+                            System.out.println(" All bigram frequencies match between compressed and naive method!");
                         } else {
-                            System.err.println("❌ Some mismatches found! Check logs above.");
+                            System.err.println(" Some mismatches found! Check logs above.");
                         }
 
                         break;
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("extracted_grammar.txt");
+                        Path grammarFile17 = Path.of("Test_from_paper.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 1000,true,true,true, "output.txt");
+                        Recompressor.recompressNTimes(original17, 0,false,true,false, "output.txt");
 
                         break;
                     case 15: {
@@ -561,8 +566,8 @@
                         System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
 
 
-                        // ✅ Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFromDecompressed(original,false,true);
+                        //  Step 5: Compute naive decompression-based frequency map
+                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(original,false,true);
 
 
                         System.out.println("=== Naive Frequency Roundtrip Results ===");
@@ -677,7 +682,7 @@
             }
         }
 
-        public static Map<Pair<Integer, Integer>, Integer> computeFromDecompressed(
+        public static Map<Pair<Integer, Integer>, Integer> computeFreqsFromDecompressed(
                 Parser.ParsedGrammar grammar,
                 boolean removeSentinels,
                 boolean addSentinels
