@@ -203,7 +203,6 @@
                 System.out.println("13. Roundtrip frequency comparison(naive vs recomp)");
                 System.out.println("14. Recompress N times (stress test)");
                 System.out.println("15. Naive bigram frequencies from decompressed text");
-                System.out.println("16. Rule editor demo (insert/set and recompute metadata)");
                 System.out.println("17. Excerpt → recompress (experimental)");
                 System.out.println("18. Uncross bigrams test ");
                 System.out.println("99. Exit");
@@ -456,7 +455,7 @@
                             }
 
                             // Step 4: Compute bigram frequencies using new method
-                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial,false);
+                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial,false,null);
 
                             // Step 5: Print frequencies
                             System.out.println("\n=== Bigram Frequencies ===");
@@ -494,7 +493,7 @@
 
                         //  Step 4: Compute compressed-space frequency map (new logic)
                         Map<Pair<Integer, Integer>, Integer> advancedFreqs =
-                                Recompressor.computeBigramFrequencies(parsed, artificial,false);
+                                Recompressor.computeBigramFrequencies(parsed, artificial,false,null);
 
                         //  Step 5: Compute naive decompression-based frequency map
                         Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(parsed,false,false);
@@ -552,7 +551,7 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("Test_from_paper.txt");
+                        Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
                         Recompressor.recompressNTimes(original17, 0,false,true,false, "output.txt");
 
@@ -608,7 +607,7 @@
 
                         Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2,false);
                         Extractor.writeGrammarToFile(excerpt2, "extracted_grammar.txt");
-                        Recompressor.recompressNTimes(excerpt2, 1000,true,true,true,"output.txt");
+                        Recompressor.recompressNTimes(excerpt2, 0,true,true,true,"output.txt");
 
 
                         //For debug purposes. The whole rule does not need to get dumped in the console in the final version
@@ -650,9 +649,9 @@
 
                         // Step 6: Check equality
                         if (before.equals(after)) {
-                            System.out.println("✅ Roundtrip successful: uncross preserved string");
+                            System.out.println("Roundtrip successful: uncross preserved string");
                         } else {
-                            System.err.println("❌ Roundtrip failed: mismatch between before and after");
+                            System.err.println("Roundtrip failed: mismatch between before and after");
                         }
 
                         return;

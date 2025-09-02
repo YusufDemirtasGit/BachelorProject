@@ -1,5 +1,6 @@
 package grammarextractor;
 
+import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
@@ -13,204 +14,236 @@ import static grammarextractor.Main.formatSymbol;
 public class Recompressor {
 
 
-    public static void recompressNTimes(Parser.ParsedGrammar originalGrammar, int maxPasses, boolean verbose, boolean initializeGrammar, boolean roundtrip, String output) {
-        StringBuilder logBuilder = new StringBuilder(); // collect all logs
+    public static void recompressNTimes(
+            Parser.ParsedGrammar originalGrammar,
+            int maxPasses,
+            boolean verbose,
+            boolean initializeGrammar,
+            boolean roundtrip,
+            String output
+    ) {
+        final String logFile = output + "_logs.txt";
 
-        // helper for logging
-        Consumer<String> log = msg -> {
-            logBuilder.append(msg).append("\n");
-            if (verbose) System.out.println(msg);
-        };
+        // Open the log file once; overwrite on each run. We stream/flush as we go.
+        try (BufferedWriter logWriter = new BufferedWriter(new FileWriter(logFile, /*append=*/false))) {
 
-        log.accept("===  Starting recompression ===");
-        log.accept("Max passes: " + maxPasses);
-        log.accept("Original grammar:");
-        log.accept(Parser.grammarToString(originalGrammar)); // you need a method returning grammar as String
-        log.accept("================================\n");
+            // helper for logging to file (streaming) + console (when verbose)
+            Consumer<String> log = msg -> {
+                try {
+                    logWriter.write(msg);
+                    logWriter.newLine();
+                } catch (IOException e) {
+                    System.err.println("Failed to write log: " + e.getMessage());
+                }
+                if (verbose) System.out.println(msg);
+            };
 
-        long startTime = System.nanoTime();
-        Parser.ParsedGrammar initialized;
-        Set<Integer> artificialTerminals = new HashSet<>();
-        Map<Integer, List<Integer>> artificialRules = new LinkedHashMap<>();
-
-        if (maxPasses == 0) { maxPasses = 999999999; }
-
-        if (initializeGrammar) {
-            log.accept(" Initializing grammar with sentinels...");
-            InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
-            initialized = init.grammar;
-            artificialTerminals.addAll(init.artificialTerminals);
-            log.accept(" Initialization complete. Starting grammar:");
-            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(initialized.grammarRules(), initialized.sequence(), Collections.emptyMap())));
-            int size = Parser.sizeOfGrammar(initialized);
-            log.accept("Grammar size = " + size);
-        } else {
-            log.accept(" Skipping grammar initialization...");
-            initialized = originalGrammar;
-            int size = Parser.sizeOfGrammar(initialized);
-            log.accept("Grammar size = " + size);
-        }
-
-        Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
-        List<Integer> sequence = new ArrayList<>(initialized.sequence());
-
-        int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
-        AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
-
-        log.accept(" Initial nextRuleId = " + initialMaxId);
-
-        log.accept(" Computing initial metadata...");
-        Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
-                new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                artificialTerminals
-        );
-        log.accept(RuleMetadata.metadataToString(metadata)); // implement a toString if not present
-        log.accept("================================");
-
-        String before = null;
-        int originalLength = 0;
-        if (roundtrip || verbose) {
-            before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
-            originalLength = before.length();
-            log.accept("===  Decompressed BEFORE All Passes ===\n" + before);
-            log.accept("Original length: " + originalLength + " symbols");
-        }
-
-        int counter = 1;
-        for (int pass = 1; pass <= maxPasses; pass++) {
-            long startTime2 = System.nanoTime();
-            log.accept("\n\n================================");
-            log.accept("===  Recompression Pass " + pass + " ===");
+            log.accept("===  Starting recompression ===");
+            log.accept("Max passes: " + maxPasses);
+            log.accept("Original grammar:");
+            log.accept(Parser.grammarToString(originalGrammar));
             log.accept("================================");
 
-            log.accept(" Current metadata before pass " + pass + ":");
+            long startTime = System.nanoTime();
+            Parser.ParsedGrammar initialized;
+            Set<Integer> artificialTerminals = new HashSet<>();
+            Map<Integer, List<Integer>> artificialRules = new LinkedHashMap<>();
+
+            if (maxPasses == 0) { maxPasses = 999_999_999; }
+
+            if (initializeGrammar) {
+                log.accept(" Initializing grammar with sentinels...");
+                InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
+                initialized = init.grammar;
+                artificialTerminals.addAll(init.artificialTerminals);
+                log.accept(" Initialization complete. Starting grammar:");
+                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(
+                        initialized.grammarRules(), initialized.sequence(), Collections.emptyMap()
+                )));
+                int size = Parser.sizeOfGrammar(initialized);
+                log.accept("Grammar size = " + size);
+            } else {
+                log.accept(" Skipping grammar initialization...");
+                initialized = originalGrammar;
+                int size = Parser.sizeOfGrammar(initialized);
+                log.accept("Grammar size = " + size);
+            }
+
+            Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
+            List<Integer> sequence = new ArrayList<>(initialized.sequence());
+
+            int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
+            AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
+
+            log.accept(" Initial nextRuleId = " + initialMaxId);
+
+            log.accept(" Computing initial metadata...");
+            Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
+                    new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
+                    artificialTerminals
+            );
             log.accept(RuleMetadata.metadataToString(metadata));
-            log.accept("\n Current grammar (excluding artificial rules):");
-            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+            log.accept("================================");
 
-            log.accept("\n Computing bigram frequencies...");
-            Map<Pair<Integer, Integer>, Integer> frequencies =
-                    computeBigramFrequencies(new Parser.ParsedGrammar(rules, sequence, metadata), artificialTerminals, verbose);
-            log.accept("Bigram frequencies computed: " + frequencies);
-
-            if (frequencies.isEmpty()) {
-                log.accept(" No bigrams found. Stopping recompression.");
-                break;
+            String before = null;
+            int originalLength = 0;
+            if (roundtrip || verbose) {
+                before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
+                originalLength = before.length();
+                log.accept("===  Decompressed BEFORE All Passes ===");
+                log.accept(before);
+                log.accept("Original length: " + originalLength + " symbols");
             }
 
-            Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
-            if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
-                log.accept("No more compressible bigrams (all <= 1 occurrence).");
-                break;
+            int counter = 1;
+            for (int pass = 1; pass <= maxPasses; pass++) {
+                long startTime2 = System.nanoTime();
+                log.accept("");
+                log.accept("================================");
+                log.accept("===  Recompression Pass " + pass + " ===");
+                log.accept("================================");
+
+                log.accept(" Current metadata before pass " + pass + ":");
+                log.accept(RuleMetadata.metadataToString(metadata));
+                log.accept(" Current grammar (excluding artificial rules):");
+                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+
+                log.accept("\n Computing bigram frequencies...");
+                Map<Pair<Integer, Integer>, Integer> frequencies =
+                        computeBigramFrequencies(
+                                new Parser.ParsedGrammar(rules, sequence, metadata),
+                                artificialTerminals,
+                                verbose,
+                                log
+                        );
+                log.accept("Bigram frequencies computed: " + frequencies);
+
+                if (frequencies.isEmpty()) {
+                    log.accept(" No bigrams found. Stopping recompression.");
+                    // flush logs up to this point and break
+                    try { logWriter.flush(); } catch (IOException ignore) {}
+                    break;
+                }
+
+                Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
+                if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
+                    log.accept("No more compressible bigrams (all <= 1 occurrence).");
+                    try { logWriter.flush(); } catch (IOException ignore) {}
+                    break;
+                }
+
+                int c1 = bigram.first;
+                int c2 = bigram.second;
+                int count = frequencies.get(bigram);
+
+                int newRuleId = nextRuleId.getAndIncrement();
+                log.accept(String.format(" Most frequent bigram: (%s, %s) → R%d [%d occurrences]",
+                        formatSymbol(c1), formatSymbol(c2), newRuleId, count));
+                log.accept("Next available rule ID updated to: " + nextRuleId.get());
+
+                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+
+                log.accept("Uncrossing bigram in main rules...");
+                uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
+                log.accept("After uncrossing (main rules only):");
+                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+
+                log.accept("Replacing explicit bigram occurrences with R" + newRuleId + "...");
+                replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
+                log.accept("After replacement (main rules only):");
+                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+
+                artificialRules.put(newRuleId, List.of(c1, c2));
+                artificialTerminals.add(newRuleId);
+                log.accept(String.format("Stored R%d as artificial rule (c1=%s, c2=%s)", newRuleId, formatSymbol(c1), formatSymbol(c2)));
+
+                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+                log.accept("Updated metadata:");
+                log.accept(RuleMetadata.metadataToString(metadata));
+
+                removeRedundantRules(rules, sequence);
+                log.accept("After normalization (main rules only):");
+                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+
+                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+
+                long endTime2 = System.nanoTime();
+                log.accept("Time required for Pass " + pass + ": " + (endTime2 - startTime2) / 1_000_000 + "ms");
+
+                if (roundtrip) {
+                    log.accept("Performing roundtrip check...");
+                    String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
+                    if (!before.equals(after)) {
+                        log.accept("Roundtrip mismatch detected! Stopping at pass " + pass);
+                        try { logWriter.flush(); } catch (IOException ignore) {}
+                        break;
+                    }
+                    before = after;
+                    log.accept("Roundtrip check passed for pass " + pass + ".");
+                }
+
+                // 🔑 Ensure the log file is up to date after each pass
+                try { logWriter.flush(); } catch (IOException ignore) {}
+
+                counter++;
             }
 
-            int c1 = bigram.first;
-            int c2 = bigram.second;
-            int count = frequencies.get(bigram);
-
-            int newRuleId = nextRuleId.getAndIncrement();
-            log.accept(String.format(" Most frequent bigram: (%s, %s) → R%d [%d occurrences]",
-                    formatSymbol(c1), formatSymbol(c2), newRuleId, count));
-            log.accept("Next available rule ID updated to: " + nextRuleId.get());
-
-            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-
-            log.accept("Uncrossing bigram in main rules...");
-            uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
-            log.accept("After uncrossing (main rules only):");
-            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
-
-            log.accept("Replacing explicit bigram occurrences with R" + newRuleId + "...");
-            replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
-            log.accept("After replacement (main rules only):");
-            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
-
-            artificialRules.put(newRuleId, List.of(c1, c2));
-            artificialTerminals.add(newRuleId);
-            log.accept(String.format("Stored R%d as artificial rule (c1=%s, c2=%s)", newRuleId, formatSymbol(c1), formatSymbol(c2)));
-
+            removeRedundantRules(rules, sequence);
             metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
             log.accept("Updated metadata:");
             log.accept(RuleMetadata.metadataToString(metadata));
 
-            removeRedundantRules(rules, sequence);
-            log.accept("After normalization (main rules only):");
-            log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
-
-            metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-
-            long endTime2   = System.nanoTime();
-            log.accept("Time required for Pass" + pass + ":" + (endTime2 - startTime2)/1_000_000 + "ms");
+            log.accept("");
+            log.accept("=== Finalizing Grammar (adding artificial rules) ===");
+            Map<Integer, List<Integer>> finalRules = new LinkedHashMap<>(rules);
+            finalRules.putAll(artificialRules);
+            Parser.ParsedGrammar finalGrammar = new Parser.ParsedGrammar(finalRules, sequence, metadata);
+            finalGrammar = normalizeGrammar(finalGrammar);
 
             if (roundtrip) {
-                log.accept("Performing roundtrip check...");
-                String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
-                if (!before.equals(after)) {
-                    log.accept("Roundtrip mismatch detected! Stopping at pass " + pass);
-                    break;
+                log.accept("Performing final roundtrip comparison...");
+                String finalResult = Decompressor.decompress(finalGrammar);
+                if (before != null && !finalResult.equals(before)) {
+                    log.accept("Final roundtrip mismatch detected after all passes!");
+                } else {
+                    log.accept("Final roundtrip result matches original input.");
                 }
-                before = after;
-                log.accept("Roundtrip check passed for pass " + pass + ".");
             }
 
-            counter++;
-        }
+            log.accept("");
+            log.accept("=== Final Grammar After " + counter + " Passes ===");
+            log.accept(Parser.grammarToString(finalGrammar));
+            int size = Parser.sizeOfGrammar(finalGrammar);
+            log.accept("Grammar size = " + size);
 
-        removeRedundantRules(rules, sequence);
-        metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-        log.accept("Updated metadata:");
-        log.accept(RuleMetadata.metadataToString(metadata));
+            long endTime = System.nanoTime();
+            log.accept("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
 
-        log.accept("\n=== Finalizing Grammar (adding artificial rules) ===");
-        Map<Integer, List<Integer>> finalRules = new LinkedHashMap<>(rules);
-        finalRules.putAll(artificialRules);
-        Parser.ParsedGrammar finalGrammar = new Parser.ParsedGrammar(finalRules, sequence, metadata);
-        finalGrammar = normalizeGrammar(finalGrammar);
-
-        if (roundtrip) {
-            log.accept("Performing final roundtrip comparison...");
-            String finalResult = Decompressor.decompress(finalGrammar);
-            if (before != null && !finalResult.equals(before)) {
-                log.accept("Final roundtrip mismatch detected after all passes!");
-            } else {
-                log.accept("Final roundtrip result matches original input.");
+            // Write final grammar to main output
+            try (FileWriter writer = new FileWriter(output)) {
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
+                    sb.append("R").append(entry.getKey()).append(": ");
+                    String rhs = entry.getValue().stream().map(Object::toString).collect(Collectors.joining(","));
+                    sb.append(rhs).append("\n");
+                }
+                sb.append("SEQ:");
+                for (int i = 0; i < finalGrammar.sequence().size(); i++) {
+                    sb.append(finalGrammar.sequence().get(i));
+                    if (i != finalGrammar.sequence().size() - 1) sb.append(",");
+                }
+                sb.append("\n\n");
+                writer.write(sb.toString());
+                log.accept("Final grammar and stats written to " + output);
+            } catch (IOException e) {
+                log.accept("Failed to write to " + output + ": " + e.getMessage());
             }
-        }
 
-        log.accept("\n=== Final Grammar After " + counter + " Passes ===");
-        log.accept(Parser.grammarToString(finalGrammar));
-        int size = Parser.sizeOfGrammar(finalGrammar);
-        log.accept("Grammar size = " + size);
+            // final flush of any remaining log buffers
+            try { logWriter.flush(); } catch (IOException ignore) {}
 
-        long endTime   = System.nanoTime();
-        log.accept("Time required in total: " + (endTime - startTime)/1_000_000 + "ms");
-
-        // Write final grammar to main output
-        try (FileWriter writer = new FileWriter(output)) {
-            StringBuilder sb = new StringBuilder();
-            for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
-                sb.append("R").append(entry.getKey()).append(": ");
-                String rhs = entry.getValue().stream().map(Object::toString).collect(Collectors.joining(","));
-                sb.append(rhs).append("\n");
-            }
-            sb.append("SEQ:");
-            for (int i = 0; i < finalGrammar.sequence().size(); i++) {
-                sb.append(finalGrammar.sequence().get(i));
-                if (i != finalGrammar.sequence().size() - 1) sb.append(",");
-            }
-            sb.append("\n\n");
-            writer.write(sb.toString());
-            log.accept("Final grammar and stats written to "+ output );
         } catch (IOException e) {
-            log.accept("Failed to write to "+output+ ":" + e.getMessage());
-        }
-
-        // Always dump logs
-        String logFile = output + "_logs.txt";
-        try (FileWriter logWriter = new FileWriter(logFile)) {
-            logWriter.write(logBuilder.toString());
-        } catch (IOException e) {
-            System.err.println("Failed to write logs to "+logFile+ ":" + e.getMessage());
+            System.err.println("Failed to open log file: " + logFile + " : " + e.getMessage());
         }
     }
 
@@ -346,13 +379,118 @@ public class Recompressor {
     }
 
 
+//    /**
+//     * Computes frequencies of non-repeating bigrams (c1 != c2) for the grammar.
+//     */
+//    public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(
+//            Parser.ParsedGrammar grammar,
+//            Set<Integer> artificialTerminals,
+//            boolean verbose
+//    ) {
+//        Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
+//        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+//        Map<Integer, RuleMetadata> metadata = grammar.metadata();
+//
+//        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+//            int ruleId = entry.getKey();
+//            if (artificialTerminals.contains(ruleId)) continue; // Skip artificial rules
+//
+//            RuleMetadata xMeta = metadata.get(ruleId);
+//            if (xMeta == null) continue;
+//            int vocc = xMeta.getVocc();
+//
+//            List<Integer> rhs = entry.getValue();
+//            if (rhs == null || rhs.isEmpty()) continue;
+//
+//            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+//            if(verbose)System.out.println("non repeating context for rule " + ruleId + ":");
+//            if(verbose)System.out.println(context);
+//
+//            // Count all adjacent non-repeating pairs
+//            for (int i = 0; i < context.size() - 1; i++) {
+//                int c1 = context.get(i);
+//                int c2 = context.get(i + 1);
+//                if (c1 != c2) {
+//                    bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
+//                    if(verbose)System.out.println("added non-repeating block " + c1 + c2 + " " + vocc + " times");
+//                }
+//            }
+//        }
+//
+//        return bigramFreqs;
+//    }
+//
+//    /**
+//     * Computes frequencies of repeating bigrams (c,c) for the grammar.
+//     *
+//     * Based on Lemma 1 of the paper "RePair in Compressed Space and Time":
+//     * - We detect blocks c^d (d >= 2) in ρ(X') · w_X · λ(X`).
+//     * - A block is counted only if X "witnesses" its maximality (Meaning it witnesses from i-1 to j+1 for a block that starts at i and ends at j).
+//     * - Prefix/suffix blocks of val(X) are ignored if they belong to child variables
+//     *   that are single-block nonterminals (All required info is pulled from the metadata).
+//     */
+//    public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
+//            Parser.ParsedGrammar grammar,
+//            Set<Integer> artificialTerminals,
+//            boolean verbose
+//    ) {
+//        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
+//        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+//        Map<Integer, RuleMetadata> metadata = grammar.metadata();
+//
+//        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+//            int Y = entry.getKey();
+//            if (artificialTerminals.contains(Y)) continue;
+//
+//            RuleMetadata yMeta = metadata.get(Y);
+//            if (yMeta == null) continue;
+//
+//            int vocc = yMeta.getVocc();
+//            List<Integer> rhs = entry.getValue();
+//            if (rhs == null || rhs.isEmpty()) continue;
+//
+//            // Build context = right run of X1 + w(Y) + left run of X2
+//            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+//            if(verbose)System.out.println("repeating context for rule " + Y + ":" + context);
+//
+//            // Determine X1 (first) and X2 (last)
+//            int X1 = rhs.get(0);
+//            int X2 = rhs.get(rhs.size() - 1);
+//
+//            boolean leftIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
+//            boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
+//
+//            // Scan context for runs of c^d (d >= 2)
+//            int i = 0;
+//            while (i < context.size()) {
+//                int c = context.get(i);
+//                int j = i + 1;
+//                while (j < context.size() && context.get(j) == c) j++;
+//                int d = j - i; // run length
+//
+//                if (d >= 2) {
+//                    boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
+//                    boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
+//
+//                    if (!isPrefixRun && !isSuffixRun) {
+//                        freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
+//                        if(verbose)System.out.println("added repeating block " + c + " " + (d / 2) * vocc + " times");
+//                    }
+//                }
+//                i = j;
+//            }
+//        }
+//
+//        return freqMap;
+//    }
     /**
      * Computes frequencies of non-repeating bigrams (c1 != c2) for the grammar.
      */
     public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
-            boolean verbose
+            boolean verbose,
+            Consumer<String> log
     ) {
         Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
@@ -370,15 +508,21 @@ public class Recompressor {
             if (rhs == null || rhs.isEmpty()) continue;
 
             List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
-            if(verbose)System.out.println("non repeating context for rule " + ruleId + ":");
-            if(verbose)System.out.println(context);
+
+            if (verbose && log != null) {
+                log.accept("non-repeating context for rule " + ruleId + ":");
+                log.accept(context.toString());
+            }
+
             // Count all adjacent non-repeating pairs
             for (int i = 0; i < context.size() - 1; i++) {
                 int c1 = context.get(i);
                 int c2 = context.get(i + 1);
                 if (c1 != c2) {
                     bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
-                    if(verbose)System.out.println("added non-repeating block " + c1 + c2 + " " + vocc + " times");
+                    if (verbose && log != null) {
+                        log.accept("added non-repeating pair (" + c1 + "," + c2 + ") " + vocc + " times");
+                    }
                 }
             }
         }
@@ -398,7 +542,8 @@ public class Recompressor {
     public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
-            boolean verbose
+            boolean verbose,
+            Consumer<String> log
     ) {
         Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
@@ -417,13 +562,15 @@ public class Recompressor {
 
             // Build context = right run of X1 + w(Y) + left run of X2
             List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
-            if(verbose)System.out.println("repeating context for rule " + Y + ":" + context);
+            if (verbose && log != null) {
+                log.accept("repeating context for rule " + Y + ": " + context);
+            }
 
             // Determine X1 (first) and X2 (last)
             int X1 = rhs.get(0);
             int X2 = rhs.get(rhs.size() - 1);
 
-            boolean leftIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
+            boolean leftIsTerminalOrSingleBlock  = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
             boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
 
             // Scan context for runs of c^d (d >= 2)
@@ -439,8 +586,17 @@ public class Recompressor {
                     boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
 
                     if (!isPrefixRun && !isSuffixRun) {
-                        freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
-                        if(verbose)System.out.println("added repeating block " + c + " " + (d / 2) * vocc + " times");
+                        int add = (d / 2) * vocc;
+                        if (add > 0) {
+                            freqMap.merge(Pair.of(c, c), add, Integer::sum);
+                            if (verbose && log != null) {
+                                log.accept("added repeating pair (" + c + "," + c + ") " + add + " times"
+                                        + " [run length=" + d + ", vocc=" + vocc + "]");
+                            }
+                        }
+                    } else if (verbose && log != null) {
+                        log.accept("ignored boundary run (" + c + "^" + d + ") for rule " + Y
+                                + " [prefix=" + isPrefixRun + ", suffix=" + isSuffixRun + "]");
                     }
                 }
                 i = j;
@@ -450,7 +606,8 @@ public class Recompressor {
         return freqMap;
     }
 
-//Helper for repeating bigrams and prefix/suffix logic
+
+    //Helper for repeating bigrams and prefix/suffix logic
     private static boolean isTerminalOrSingleBlock(
             int symbol,
             Map<Integer, RuleMetadata> metadata,
@@ -469,20 +626,44 @@ public class Recompressor {
     /**
      * Merges non-repeating and repeating frequencies into one map. Not necessarily optimal, since all can be calculated in one single pass. I did it this way since it's easier to read.
      */
+//    public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
+//            Parser.ParsedGrammar grammar,
+//            Set<Integer> artificialTerminals,
+//            boolean verbose
+//    ) {
+//        Map<Pair<Integer, Integer>, Integer> nonRep = computeNonRepeatingFrequencies(grammar, artificialTerminals,verbose);
+//        Map<Pair<Integer, Integer>, Integer> rep = computeRepeatingFrequencies(grammar, artificialTerminals,verbose);
+//
+//        Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRep);
+//        for (Map.Entry<Pair<Integer, Integer>, Integer> e : rep.entrySet()) {
+//            merged.merge(e.getKey(), e.getValue(), Integer::sum);
+//        }
+//        return merged;
+//    }
+
     public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
-            boolean verbose
+            boolean verbose,
+            Consumer<String> log
     ) {
-        Map<Pair<Integer, Integer>, Integer> nonRep = computeNonRepeatingFrequencies(grammar, artificialTerminals,verbose);
-        Map<Pair<Integer, Integer>, Integer> rep = computeRepeatingFrequencies(grammar, artificialTerminals,verbose);
+        Map<Pair<Integer, Integer>, Integer> nonRep =
+                computeNonRepeatingFrequencies(grammar, artificialTerminals, verbose, log);
+        Map<Pair<Integer, Integer>, Integer> rep =
+                computeRepeatingFrequencies(grammar, artificialTerminals, verbose, log);
 
         Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRep);
         for (Map.Entry<Pair<Integer, Integer>, Integer> e : rep.entrySet()) {
             merged.merge(e.getKey(), e.getValue(), Integer::sum);
         }
+
+        if (verbose && log != null) {
+            log.accept("Merged bigram frequencies: " + merged);
+        }
+
         return merged;
     }
+
 
 
 

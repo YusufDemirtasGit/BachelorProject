@@ -11,6 +11,7 @@ public class Extractor {
         if (start < 0 || start > end || end > getUncompressedSize(parsedInput)) {
             throw new IllegalArgumentException("Invalid excerpt range.");
         }
+        long startTime = System.nanoTime();
         List<Integer> excerptSequence = new ArrayList<>();
         Map<Integer, List<Integer>> excerptRules = new HashMap<>();
         Map<Integer, List<Integer>> allRules = parsedInput.grammarRules();
@@ -26,8 +27,6 @@ public class Extractor {
             startIndex++;
         }
         int totalTraversedBeforeStart = totalTraversed;
-        System.out.println("Total traversed before start: " + totalTraversedBeforeStart);
-        System.out.println("start index: " + startIndex);
 
         // Find end boundary symbol
         totalTraversed = 0;
@@ -37,8 +36,6 @@ public class Extractor {
             endIndex++;
         }
         int totalTraversedBeforeEnd = totalTraversed;
-        System.out.println("Total traversed before end: " + totalTraversedBeforeEnd);
-        System.out.println("end index: " + endIndex);
 
         // Case: start and end within same symbol
         if (startIndex == endIndex) {
@@ -91,6 +88,8 @@ public class Extractor {
         Parser.ParsedGrammar unnormalized =
                 new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
 
+        long endTime = System.nanoTime();
+        System.out.println("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
         // Normalize ids and recompute metadata on the normalized grammar
         if(normalize) return normalizeRuleIds(unnormalized);
         else return unnormalized;

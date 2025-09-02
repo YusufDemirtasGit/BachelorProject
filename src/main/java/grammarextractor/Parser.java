@@ -49,7 +49,7 @@ public class Parser {
 
         long endTime   = System.nanoTime();
         long totalTime = endTime - startTime;
-        System.out.println("Time required for in total" + ":" +totalTime/1000000 + "ms");
+        System.out.println("Time required for parsing in total" + ":" +totalTime/1000000 + "ms");
 
 
         // 3. Return full grammar
