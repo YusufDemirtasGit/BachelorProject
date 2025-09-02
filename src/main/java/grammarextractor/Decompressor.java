@@ -7,12 +7,14 @@ import java.util.*;
 public class Decompressor {
 
     public static String decompress(Parser.ParsedGrammar parsedGrammar) {
+        long startTime = System.nanoTime();
         StringBuilder output = new StringBuilder();
 
         for (int symbol : parsedGrammar.sequence()) {
             expand(symbol, parsedGrammar.grammarRules(), output);
         }
-
+        long endTime = System.nanoTime();
+        System.out.println("Time required for decompression in total: " + (endTime - startTime) / 1_000_000 + "ms");
         return output.toString();
     }
 
