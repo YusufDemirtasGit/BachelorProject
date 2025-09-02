@@ -509,7 +509,7 @@ public class Recompressor {
 
             List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
 
-            if (verbose && log != null) {
+            if (verbose || log != null) {
                 log.accept("non-repeating context for rule " + ruleId + ":");
                 log.accept(context.toString());
             }
@@ -520,7 +520,7 @@ public class Recompressor {
                 int c2 = context.get(i + 1);
                 if (c1 != c2) {
                     bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
-                    if (verbose && log != null) {
+                    if (verbose || log != null) {
                         log.accept("added non-repeating pair (" + c1 + "," + c2 + ") " + vocc + " times");
                     }
                 }
@@ -562,7 +562,7 @@ public class Recompressor {
 
             // Build context = right run of X1 + w(Y) + left run of X2
             List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
-            if (verbose && log != null) {
+            if (verbose || log != null) {
                 log.accept("repeating context for rule " + Y + ": " + context);
             }
 
@@ -589,12 +589,12 @@ public class Recompressor {
                         int add = (d / 2) * vocc;
                         if (add > 0) {
                             freqMap.merge(Pair.of(c, c), add, Integer::sum);
-                            if (verbose && log != null) {
+                            if (verbose || log != null) {
                                 log.accept("added repeating pair (" + c + "," + c + ") " + add + " times"
                                         + " [run length=" + d + ", vocc=" + vocc + "]");
                             }
                         }
-                    } else if (verbose && log != null) {
+                    } else if (verbose || log != null) {
                         log.accept("ignored boundary run (" + c + "^" + d + ") for rule " + Y
                                 + " [prefix=" + isPrefixRun + ", suffix=" + isSuffixRun + "]");
                     }

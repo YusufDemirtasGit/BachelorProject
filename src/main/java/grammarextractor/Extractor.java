@@ -89,7 +89,7 @@ public class Extractor {
                 new Parser.ParsedGrammar(excerptRules, excerptSequence, computedMeta);
 
         long endTime = System.nanoTime();
-        System.out.println("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
+        System.out.println("Time required for extraction in total: " + (endTime - startTime) / 1_000_000 + "ms");
         // Normalize ids and recompute metadata on the normalized grammar
         if(normalize) return normalizeRuleIds(unnormalized);
         else return unnormalized;
