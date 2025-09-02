@@ -24,24 +24,29 @@ public class Recompressor {
     ) {
         final String logFile = output + "_logs.txt";
 
-        // Open the log file once; overwrite on each run. We stream/flush as we go.
-        try (BufferedWriter logWriter = new BufferedWriter(new FileWriter(logFile, /*append=*/false))) {
+        BufferedWriter logWriter = null;
+        try {
+            if (verbose) {
+                // Open the log file once; overwrite on each run. We stream/flush as we go.
+                logWriter = new BufferedWriter(new FileWriter(logFile, /*append=*/false));
+            }
 
-            // helper for logging to file (streaming) + console (when verbose)
+            // helper for logging to file only when verbose; no console prints at all
+            BufferedWriter finalLogWriter = logWriter;
             Consumer<String> log = msg -> {
+                if (!verbose) return;
                 try {
-                    logWriter.write(msg);
-                    logWriter.newLine();
-                } catch (IOException e) {
-                    System.err.println("Failed to write log: " + e.getMessage());
+                    finalLogWriter.write(msg);
+                    finalLogWriter.newLine();
+                } catch (IOException ignored) {
+                    // Intentionally no console output
                 }
-                if (verbose) System.out.println(msg);
             };
 
             log.accept("===  Starting recompression ===");
             log.accept("Max passes: " + maxPasses);
             log.accept("Original grammar:");
-            log.accept(Parser.grammarToString(originalGrammar));
+            //log.accept(Parser.grammarToString(originalGrammar));
             log.accept("================================");
 
             long startTime = System.nanoTime();
@@ -49,7 +54,9 @@ public class Recompressor {
             Set<Integer> artificialTerminals = new HashSet<>();
             Map<Integer, List<Integer>> artificialRules = new LinkedHashMap<>();
 
-            if (maxPasses == 0) { maxPasses = 999_999_999; }
+            if (maxPasses == 0) {
+                maxPasses = 999_999_999;
+            }
 
             if (initializeGrammar) {
                 log.accept(" Initializing grammar with sentinels...");
@@ -87,7 +94,7 @@ public class Recompressor {
 
             String before = null;
             int originalLength = 0;
-            if (roundtrip || verbose) {
+            if (roundtrip) {
                 before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
                 originalLength = before.length();
                 log.accept("===  Decompressed BEFORE All Passes ===");
@@ -105,8 +112,8 @@ public class Recompressor {
 
                 log.accept(" Current metadata before pass " + pass + ":");
                 log.accept(RuleMetadata.metadataToString(metadata));
-                log.accept(" Current grammar (excluding artificial rules):");
-                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+               // log.accept(" Current grammar (excluding artificial rules):");
+                //log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
                 log.accept("\n Computing bigram frequencies...");
                 Map<Pair<Integer, Integer>, Integer> frequencies =
@@ -120,15 +127,18 @@ public class Recompressor {
 
                 if (frequencies.isEmpty()) {
                     log.accept(" No bigrams found. Stopping recompression.");
-                    // flush logs up to this point and break
-                    try { logWriter.flush(); } catch (IOException ignore) {}
+                    if (verbose) {
+                        try { logWriter.flush(); } catch (IOException ignore) {}
+                    }
                     break;
                 }
 
                 Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
                 if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
                     log.accept("No more compressible bigrams (all <= 1 occurrence).");
-                    try { logWriter.flush(); } catch (IOException ignore) {}
+                    if (verbose) {
+                        try { logWriter.flush(); } catch (IOException ignore) {}
+                    }
                     break;
                 }
 
@@ -175,7 +185,9 @@ public class Recompressor {
                     String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
                     if (!before.equals(after)) {
                         log.accept("Roundtrip mismatch detected! Stopping at pass " + pass);
-                        try { logWriter.flush(); } catch (IOException ignore) {}
+                        if (verbose) {
+                            try { logWriter.flush(); } catch (IOException ignore) {}
+                        }
                         break;
                     }
                     before = after;
@@ -183,7 +195,9 @@ public class Recompressor {
                 }
 
                 // 🔑 Ensure the log file is up to date after each pass
-                try { logWriter.flush(); } catch (IOException ignore) {}
+                if (verbose) {
+                    try { logWriter.flush(); } catch (IOException ignore) {}
+                }
 
                 counter++;
             }
@@ -236,16 +250,23 @@ public class Recompressor {
                 writer.write(sb.toString());
                 log.accept("Final grammar and stats written to " + output);
             } catch (IOException e) {
-                log.accept("Failed to write to " + output + ": " + e.getMessage());
+                // No console prints, and no logging if not verbose
             }
 
             // final flush of any remaining log buffers
-            try { logWriter.flush(); } catch (IOException ignore) {}
+            if (verbose) {
+                try { logWriter.flush(); } catch (IOException ignore) {}
+            }
 
         } catch (IOException e) {
-            System.err.println("Failed to open log file: " + logFile + " : " + e.getMessage());
+            // Failed to open log file or other IO setup; no console output and no logging
+        } finally {
+            if (logWriter != null) {
+                try { logWriter.close(); } catch (IOException ignore) {}
+            }
         }
     }
+
 
 
 

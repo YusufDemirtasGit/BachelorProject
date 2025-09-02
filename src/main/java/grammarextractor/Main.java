@@ -553,7 +553,7 @@
                     case 14:
                         Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,false,true,false, "output.txt");
+                        Recompressor.recompressNTimes(original17, 0,true,true,false, "output.txt");
 
                         break;
                     case 15: {
