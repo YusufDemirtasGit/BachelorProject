@@ -13,7 +13,7 @@
             System.out.println("Initializing...");
 
             // List of filenames to check and update permissions for
-            String[] filesToCheck = { "encoder", "decoder"};
+            String[] filesToCheck = { "encoder_mac", "decoder_mac"};
 
             // Get current working directory
             String currentDir = System.getProperty("user.dir");
@@ -65,7 +65,7 @@
                     printHelp();
                     return;
                 }
-                ProcessBuilder builder1 = new ProcessBuilder("./encoder", input);
+                ProcessBuilder builder1 = new ProcessBuilder("./encoder_mac", input);
                 builder1.inheritIO(); // Optional: should let the decoder print to console
                 Process process1 = builder1.start();
                 int exitCode1 = process1.waitFor();
@@ -85,7 +85,7 @@
                     printHelp();
                     return;
                 }
-                ProcessBuilder builder2 = new ProcessBuilder("./decoder", input, output);
+                ProcessBuilder builder2 = new ProcessBuilder("./decoder_mac", input, output);
                 builder2.inheritIO(); // Optional: should let the decoder print to console
                 Process process2 = builder2.start();
                 int exitCode2 = process2.waitFor();
@@ -219,7 +219,7 @@
                     case 1:
                         System.out.println("\nPlease enter the input file you would like to compress:");
                         Path fileToCompress = Paths.get(scanner.nextLine().trim());
-                        ProcessBuilder builder1 = new ProcessBuilder("./encoder", fileToCompress.toString());
+                        ProcessBuilder builder1 = new ProcessBuilder("./encoder_mac", fileToCompress.toString());
                         builder1.inheritIO(); // Optional: should let the decoder print to console
                         Process process1 = builder1.start();
                         int exitCode1 = process1.waitFor();
@@ -228,19 +228,28 @@
                         } else {
                             System.err.println("\nEncoder failed with exit code " + exitCode1);
                         }
-                        break;
-
-                    case 3:
-                        System.out.println("\nPlease enter the compressed input file you would like to decompress (File name ends with .rp):");
-                        Path fileToTranslate = Paths.get(scanner.nextLine());
-                        ProcessBuilder builder2 = new ProcessBuilder("./decoder", fileToTranslate.toString(), "input_translated.txt");
-                        builder2.inheritIO(); // Optional: should let the decoder print to console
-                        Process process2 = builder2.start();
+                        ProcessBuilder builder19 = new ProcessBuilder("./decoder_mac", fileToCompress.toString(), "input_translated.txt");
+                        builder19.inheritIO(); // Optional: should let the decoder print to console
+                        Process process2 = builder19.start();
                         int exitCode2 = process2.waitFor();
                         if (exitCode2 == 0) {
                             System.out.println("\nBinary file translated successfully. The result is saved under input_translated.txt");
                         } else {
                             System.err.println("\nDecoder failed with exit code " + exitCode2);
+                        }
+                        break;
+
+                    case 3:
+                        System.out.println("\nPlease enter the compressed input file you would like to decompress (File name ends with .rp):");
+                        Path fileToTranslate = Paths.get(scanner.nextLine());
+                        ProcessBuilder builder2 = new ProcessBuilder("./decoder_mac", fileToTranslate.toString(), "input_translated.txt");
+                        builder2.inheritIO(); // Optional: should let the decoder print to console
+                        Process process19 = builder2.start();
+                        int exitCode19 = process19.waitFor();
+                        if (exitCode19 == 0) {
+                            System.out.println("\nBinary file translated successfully. The result is saved under input_translated.txt");
+                        } else {
+                            System.err.println("\nDecoder failed with exit code " + exitCode19);
                         }
                         System.out.println("\nParsing the grammar from input_translated.txt");
                         Parser.ParsedGrammar parsedGrammar = Parser.parseFile(Paths.get("input_translated.txt"));
@@ -272,7 +281,7 @@
                         } else {
                             System.out.println("\nInvalid choice");
                         }
-                        ProcessBuilder builder3 = new ProcessBuilder("./encoder", fileToTest.toString());
+                        ProcessBuilder builder3 = new ProcessBuilder("./encoder_mac", fileToTest.toString());
                         builder3.inheritIO(); // Optional: should let the decoder print to console
                         Process process3 = builder3.start();
                         int exitCode3 = process3.waitFor();
@@ -283,7 +292,7 @@
                         }
 
                         Path fileToTranslate2 = Paths.get(fileToTest + ".rp");
-                        ProcessBuilder builder4 = new ProcessBuilder("./decoder", fileToTranslate2.toString(), "test_translated.txt");
+                        ProcessBuilder builder4 = new ProcessBuilder("./decoder_mac", fileToTranslate2.toString(), "test_translated.txt");
                         builder4.inheritIO(); // Optional: should let the decoder print to console
                         Process process4 = builder4.start();
                         int exitCode4 = process4.waitFor();
@@ -338,7 +347,7 @@
                     case 7:
                         System.out.println("\nPlease enter the input file you would like to compress:");
                         Path fileToCompress3 = Paths.get(scanner.nextLine().trim());
-                        ProcessBuilder builder5 = new ProcessBuilder("./encoder", fileToCompress3.toString());
+                        ProcessBuilder builder5 = new ProcessBuilder("./encoder_mac", fileToCompress3.toString());
                         builder5.inheritIO(); // Optional: should let the decoder print to console
                         Process process5 = builder5.start();
                         int exitCode5 = process5.waitFor();
@@ -348,7 +357,7 @@
                             System.err.println("\nEncoder failed with exit code " + exitCode5);
                         }
                         Path fileToTranslate4 = Paths.get(fileToCompress3 + ".rp");
-                        ProcessBuilder builder6 = new ProcessBuilder("./decoder", fileToTranslate4.toString(), "input_translated.txt");
+                        ProcessBuilder builder6 = new ProcessBuilder("./decoder_mac", fileToTranslate4.toString(), "input_translated.txt");
                         builder6.inheritIO(); // Optional: should let the decoder print to console
                         Process process6 = builder6.start();
                         int exitCode6 = process6.waitFor();
