@@ -57,7 +57,7 @@ public class Recompressor {
             if (maxPasses == 0) {
                 maxPasses = 999_999_999;
             }
-
+            float startsize = 0;
             if (initializeGrammar) {
                 log.accept(" Initializing grammar with sentinels...");
                 InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
@@ -67,13 +67,15 @@ public class Recompressor {
                 log.accept(Parser.grammarToString(new Parser.ParsedGrammar(
                         initialized.grammarRules(), initialized.sequence(), Collections.emptyMap()
                 )));
-                int size = Parser.sizeOfGrammar(initialized);
-                log.accept("Grammar size = " + size);
+                startsize = Parser.sizeOfGrammar(initialized);
+                log.accept("Grammar size = " + startsize);
+                System.out.println("Starting Grammar Size="+startsize);
             } else {
                 log.accept(" Skipping grammar initialization...");
                 initialized = originalGrammar;
-                int size = Parser.sizeOfGrammar(initialized);
-                log.accept("Grammar size = " + size);
+                startsize = Parser.sizeOfGrammar(initialized);
+                log.accept("Grammar size = " + startsize);
+                System.out.println("Starting Grammar Size="+startsize);
             }
 
             Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
@@ -96,10 +98,8 @@ public class Recompressor {
             int originalLength = 0;
             if (roundtrip) {
                 before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
-                originalLength = before.length();
                 log.accept("===  Decompressed BEFORE All Passes ===");
-                log.accept(before);
-                log.accept("Original length: " + originalLength + " symbols");
+
             }
 
             int counter = 1;
@@ -111,6 +111,8 @@ public class Recompressor {
                 log.accept("================================");
 
                 log.accept(" Current metadata before pass " + pass + ":");
+                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
+                Parser.ParsedGrammar workingGrammar=new Parser.ParsedGrammar(rules, sequence, metadata);
                 log.accept(RuleMetadata.metadataToString(metadata));
                // log.accept(" Current grammar (excluding artificial rules):");
                 //log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
@@ -118,7 +120,7 @@ public class Recompressor {
                 log.accept("\n Computing bigram frequencies...");
                 Map<Pair<Integer, Integer>, Integer> frequencies =
                         computeBigramFrequencies(
-                                new Parser.ParsedGrammar(rules, sequence, metadata),
+                                workingGrammar,
                                 artificialTerminals,
                                 verbose,
                                 log
@@ -151,7 +153,6 @@ public class Recompressor {
                         formatSymbol(c1), formatSymbol(c2), newRuleId, count));
                 log.accept("Next available rule ID updated to: " + nextRuleId.get());
 
-                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
 
                 log.accept("Uncrossing bigram in main rules...");
                 uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
@@ -167,19 +168,15 @@ public class Recompressor {
                 artificialTerminals.add(newRuleId);
                 log.accept(String.format("Stored R%d as artificial rule (c1=%s, c2=%s)", newRuleId, formatSymbol(c1), formatSymbol(c2)));
 
-                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-                log.accept("Updated metadata:");
-                log.accept(RuleMetadata.metadataToString(metadata));
 
                 removeRedundantRules(rules, sequence);
                 log.accept("After normalization (main rules only):");
                 log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
 
-                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
 
                 long endTime2 = System.nanoTime();
                 log.accept("Time required for Pass " + pass + ": " + (endTime2 - startTime2) / 1_000_000 + "ms");
-
+                System.out.println("Time required for Pass " + pass + ": " + (endTime2 - startTime2) / 1_000_000 + "ms");
                 if (roundtrip) {
                     log.accept("Performing roundtrip check...");
                     String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
@@ -227,12 +224,14 @@ public class Recompressor {
             log.accept("");
             log.accept("=== Final Grammar After " + counter + " Passes ===");
             log.accept(Parser.grammarToString(finalGrammar));
-            int size = Parser.sizeOfGrammar(finalGrammar);
-            log.accept("Grammar size = " + size);
+            float finalsize = Parser.sizeOfGrammar(finalGrammar);
+            log.accept("Grammar size = " + finalsize);
+            System.out.println("Final Grammar size after recompression=" + finalsize);
+            System.out.println("Reduction in size=" + (1 - finalsize/startsize) * 100 + "%");
 
             long endTime = System.nanoTime();
             log.accept("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
-
+            System.out.println("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
             // Write final grammar to main output
             try (FileWriter writer = new FileWriter(output)) {
                 StringBuilder sb = new StringBuilder();
