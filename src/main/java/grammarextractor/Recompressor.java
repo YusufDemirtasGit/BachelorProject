@@ -5,6 +5,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -17,7 +18,7 @@ public class Recompressor {
     public static void recompressNTimes(
             Parser.ParsedGrammar originalGrammar,
             int maxPasses,
-            boolean verbose,
+            int verbosity,               // now integer 0–3
             boolean initializeGrammar,
             boolean roundtrip,
             String output
@@ -26,28 +27,28 @@ public class Recompressor {
 
         BufferedWriter logWriter = null;
         try {
-            if (verbose) {
-                // Open the log file once; overwrite on each run. We stream/flush as we go.
+            // only create log file if verbosity > 0
+            if (verbosity > 0) {
                 logWriter = new BufferedWriter(new FileWriter(logFile, /*append=*/false));
             }
 
-            // helper for logging to file only when verbose; no console prints at all
+            // helper for logging
             BufferedWriter finalLogWriter = logWriter;
-            Consumer<String> log = msg -> {
-                if (!verbose) return;
-                try {
-                    finalLogWriter.write(msg);
-                    finalLogWriter.newLine();
-                } catch (IOException ignored) {
-                    // Intentionally no console output
+            BiConsumer<Integer, String> log = (level, msg) -> {
+                if (verbosity >= level && finalLogWriter != null) {
+                    try {
+                        finalLogWriter.write(msg);
+                        finalLogWriter.newLine();
+                    } catch (IOException ignored) {}
                 }
             };
 
-            log.accept("===  Starting recompression ===");
-            log.accept("Max passes: " + maxPasses);
-            log.accept("Original grammar:");
-            //log.accept(Parser.grammarToString(originalGrammar));
-            log.accept("================================");
+            if (verbosity == 1) {
+                log.accept(3, "===  Starting recompression ===");
+                log.accept(3, "Max passes: " + maxPasses);
+                log.accept(3, "Original grammar:");
+                log.accept(3, "================================");
+            }
 
             long startTime = System.nanoTime();
             Parser.ParsedGrammar initialized;
@@ -57,25 +58,21 @@ public class Recompressor {
             if (maxPasses == 0) {
                 maxPasses = 999_999_999;
             }
-            float startsize = 0;
+
+            float startsize;
             if (initializeGrammar) {
-                log.accept(" Initializing grammar with sentinels...");
+                log.accept(3, " Initializing grammar with sentinels...");
                 InitializedGrammar init = initializeWithSentinelsAndRootRule(originalGrammar);
                 initialized = init.grammar;
                 artificialTerminals.addAll(init.artificialTerminals);
-                log.accept(" Initialization complete. Starting grammar:");
-                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(
-                        initialized.grammarRules(), initialized.sequence(), Collections.emptyMap()
-                )));
+                log.accept(3, " Initialization complete.");
                 startsize = Parser.sizeOfGrammar(initialized);
-                log.accept("Grammar size = " + startsize);
-                System.out.println("Starting Grammar Size="+startsize);
+                log.accept(1, "Grammar size = " + startsize);
             } else {
-                log.accept(" Skipping grammar initialization...");
+                log.accept(3, " Skipping grammar initialization...");
                 initialized = originalGrammar;
                 startsize = Parser.sizeOfGrammar(initialized);
-                log.accept("Grammar size = " + startsize);
-                System.out.println("Starting Grammar Size="+startsize);
+                log.accept(1, "Grammar size = " + startsize);
             }
 
             Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
@@ -83,116 +80,122 @@ public class Recompressor {
 
             int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
             AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
+            log.accept(2, " Initial nextRuleId = " + initialMaxId);
 
-            log.accept(" Initial nextRuleId = " + initialMaxId);
-
-            log.accept(" Computing initial metadata...");
+            log.accept(3, " Computing initial metadata...");
             Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
                     new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
                     artificialTerminals
             );
-            log.accept(RuleMetadata.metadataToString(metadata));
-            log.accept("================================");
+            log.accept(3, RuleMetadata.metadataToString(metadata));
+            log.accept(3, "================================");
 
             String before = null;
-            int originalLength = 0;
             if (roundtrip) {
                 before = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
-                log.accept("===  Decompressed BEFORE All Passes ===");
-
+                log.accept(3, "===  Decompressed BEFORE All Passes ===");
             }
 
             int counter = 1;
             for (int pass = 1; pass <= maxPasses; pass++) {
-                long startTime2 = System.nanoTime();
-                log.accept("");
-                log.accept("================================");
-                log.accept("===  Recompression Pass " + pass + " ===");
-                log.accept("================================");
+                long passStartNs = System.nanoTime();
+                log.accept(3, "===  Recompression Pass " + pass + " ===");
 
-                log.accept(" Current metadata before pass " + pass + ":");
-                metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-                Parser.ParsedGrammar workingGrammar=new Parser.ParsedGrammar(rules, sequence, metadata);
-                log.accept(RuleMetadata.metadataToString(metadata));
-               // log.accept(" Current grammar (excluding artificial rules):");
-                //log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+                // --- metadata (already timed) ---
+                long metaStartNs = System.nanoTime();
+                metadata = RuleMetadata.computeAll(
+                        new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
+                        artificialTerminals
+                );
+                long metaEndNs = System.nanoTime();
+                log.accept(2, "Time for metadata computation: " + (metaEndNs - metaStartNs) / 1_000_000 + "ms");
 
-                log.accept("\n Computing bigram frequencies...");
+                Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
+
+                // --- bigram frequencies ---
+                log.accept(3, " Computing bigram frequencies...");
+                long freqStartNs = System.nanoTime();
                 Map<Pair<Integer, Integer>, Integer> frequencies =
                         computeBigramFrequencies(
                                 workingGrammar,
                                 artificialTerminals,
-                                verbose,
-                                log
+                                verbosity >= 3,
+                                msg -> log.accept(3, msg)
                         );
-                log.accept("Bigram frequencies computed: " + frequencies);
+                long freqEndNs = System.nanoTime();
+                log.accept(2, "Time for bigram frequency computation: " + (freqEndNs - freqStartNs) / 1_000_000 + "ms");
 
                 if (frequencies.isEmpty()) {
-                    log.accept(" No bigrams found. Stopping recompression.");
-                    if (verbose) {
-                        try { logWriter.flush(); } catch (IOException ignore) {}
-                    }
+                    log.accept(3, " No bigrams found. Stopping recompression.");
                     break;
                 }
 
+                // --- select most frequent bigram ---
+                long pickStartNs = System.nanoTime();
                 Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
+                long pickEndNs = System.nanoTime();
+                log.accept(2, "Time to pick most frequent bigram: " + (pickEndNs - pickStartNs) / 1_000_000 + "ms");
+
                 if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
-                    log.accept("No more compressible bigrams (all <= 1 occurrence).");
-                    if (verbose) {
-                        try { logWriter.flush(); } catch (IOException ignore) {}
-                    }
+                    log.accept(3, "No more compressible bigrams (all <= 1 occurrence).");
                     break;
                 }
 
                 int c1 = bigram.first;
                 int c2 = bigram.second;
-                int count = frequencies.get(bigram);
 
                 int newRuleId = nextRuleId.getAndIncrement();
-                log.accept(String.format(" Most frequent bigram: (%s, %s) → R%d [%d occurrences]",
-                        formatSymbol(c1), formatSymbol(c2), newRuleId, count));
-                log.accept("Next available rule ID updated to: " + nextRuleId.get());
 
-
-                log.accept("Uncrossing bigram in main rules...");
+                // --- uncross ---
+                long uncrossStartNs = System.nanoTime();
                 uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
-                log.accept("After uncrossing (main rules only):");
-                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+                long uncrossEndNs = System.nanoTime();
+                log.accept(2, "Time for uncrossing bigrams: " + (uncrossEndNs - uncrossStartNs) / 1_000_000 + "ms");
 
-                log.accept("Replacing explicit bigram occurrences with R" + newRuleId + "...");
+                // --- replace ---
+                long replaceStartNs = System.nanoTime();
                 replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
-                log.accept("After replacement (main rules only):");
-                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+                long replaceEndNs = System.nanoTime();
+                log.accept(2, "Time for replacing bigram with new rule: " + (replaceEndNs - replaceStartNs) / 1_000_000 + "ms");
 
                 artificialRules.put(newRuleId, List.of(c1, c2));
                 artificialTerminals.add(newRuleId);
-                log.accept(String.format("Stored R%d as artificial rule (c1=%s, c2=%s)", newRuleId, formatSymbol(c1), formatSymbol(c2)));
 
-
+                // --- prune redundant rules ---
+                long pruneStartNs = System.nanoTime();
                 removeRedundantRules(rules, sequence);
-                log.accept("After normalization (main rules only):");
-                log.accept(Parser.grammarToString(new Parser.ParsedGrammar(rules, sequence, metadata)));
+                long pruneEndNs = System.nanoTime();
+                log.accept(2, "Time for removing redundant rules: " + (pruneEndNs - pruneStartNs) / 1_000_000 + "ms");
 
+                // --- per-pass total (before roundtrip to isolate transform time) ---
+                long preRoundtripEndNs = System.nanoTime();
+                log.accept(2, "Time for pass core (metadata->prune): " + (preRoundtripEndNs - metaStartNs) / 1_000_000 + "ms");
 
-                long endTime2 = System.nanoTime();
-                log.accept("Time required for Pass " + pass + ": " + (endTime2 - startTime2) / 1_000_000 + "ms");
-                System.out.println("Time required for Pass " + pass + ": " + (endTime2 - startTime2) / 1_000_000 + "ms");
+                // --- roundtrip check (timed) ---
                 if (roundtrip) {
-                    log.accept("Performing roundtrip check...");
-                    String after = Decompressor.decompress(buildCombinedGrammar(rules, artificialRules, sequence, metadata));
+                    log.accept(3, "Performing roundtrip check...");
+                    long buildStartNs = System.nanoTime();
+                    Parser.ParsedGrammar combined = buildCombinedGrammar(rules, artificialRules, sequence, metadata);
+                    long buildEndNs = System.nanoTime();
+                    log.accept(2, "Time to build combined grammar: " + (buildEndNs - buildStartNs) / 1_000_000 + "ms");
+
+                    long decompStartNs = System.nanoTime();
+                    String after = Decompressor.decompress(combined);
+                    long decompEndNs = System.nanoTime();
+                    log.accept(2, "Time to decompress for roundtrip: " + (decompEndNs - decompStartNs) / 1_000_000 + "ms");
+
                     if (!before.equals(after)) {
-                        log.accept("Roundtrip mismatch detected! Stopping at pass " + pass);
-                        if (verbose) {
-                            try { logWriter.flush(); } catch (IOException ignore) {}
-                        }
+                        log.accept(3, "Roundtrip mismatch detected! Stopping at pass " + pass);
                         break;
                     }
                     before = after;
-                    log.accept("Roundtrip check passed for pass " + pass + ".");
+                    log.accept(3, "Roundtrip check passed for pass " + pass + ".");
                 }
 
-                // 🔑 Ensure the log file is up to date after each pass
-                if (verbose) {
+                long passEndNs = System.nanoTime();
+                log.accept(1, "Time required for Pass " + pass + ": " + (passEndNs - passStartNs) / 1_000_000 + "ms");
+
+                if (verbosity > 0) {
                     try { logWriter.flush(); } catch (IOException ignore) {}
                 }
 
@@ -201,71 +204,66 @@ public class Recompressor {
 
             removeRedundantRules(rules, sequence);
             metadata = RuleMetadata.computeAll(new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()), artificialTerminals);
-            log.accept("Updated metadata:");
-            log.accept(RuleMetadata.metadataToString(metadata));
+            log.accept(3, "Updated metadata:");
+            log.accept(3, RuleMetadata.metadataToString(metadata));
 
-            log.accept("");
-            log.accept("=== Finalizing Grammar (adding artificial rules) ===");
             Map<Integer, List<Integer>> finalRules = new LinkedHashMap<>(rules);
             finalRules.putAll(artificialRules);
-            Parser.ParsedGrammar finalGrammar = new Parser.ParsedGrammar(finalRules, sequence, metadata);
-            finalGrammar = normalizeGrammar(finalGrammar);
+            Parser.ParsedGrammar finalGrammar = normalizeGrammar(new Parser.ParsedGrammar(finalRules, sequence, metadata));
 
             if (roundtrip) {
-                log.accept("Performing final roundtrip comparison...");
+                log.accept(3, "Performing final roundtrip comparison...");
                 String finalResult = Decompressor.decompress(finalGrammar);
                 if (before != null && !finalResult.equals(before)) {
-                    log.accept("Final roundtrip mismatch detected after all passes!");
+                    log.accept(3, "Final roundtrip mismatch detected after all passes!");
                 } else {
-                    log.accept("Final roundtrip result matches original input.");
+                    log.accept(3, "Final roundtrip result matches original input.");
                 }
             }
 
-            log.accept("");
-            log.accept("=== Final Grammar After " + counter + " Passes ===");
-            log.accept(Parser.grammarToString(finalGrammar));
             float finalsize = Parser.sizeOfGrammar(finalGrammar);
-            log.accept("Grammar size = " + finalsize);
-            System.out.println("Final Grammar size after recompression=" + finalsize);
-            System.out.println("Reduction in size=" + (1 - finalsize/startsize) * 100 + "%");
+            log.accept(1, "Final Grammar size after recompression=" + finalsize);
+            log.accept(1, "Reduction in size=" + (1 - finalsize/startsize) * 100 + "%");
 
             long endTime = System.nanoTime();
-            log.accept("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
-            System.out.println("Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
-            // Write final grammar to main output
-            try (FileWriter writer = new FileWriter(output)) {
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
-                    sb.append("R").append(entry.getKey()).append(": ");
-                    String rhs = entry.getValue().stream().map(Object::toString).collect(Collectors.joining(","));
-                    sb.append(rhs).append("\n");
+            log.accept(1, "Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
+
+            // Write final grammar to file
+            if (verbosity > 0) {
+                try (FileWriter writer = new FileWriter(output)) {
+                    StringBuilder sb = new StringBuilder();
+                    for (Map.Entry<Integer, List<Integer>> entry : finalGrammar.grammarRules().entrySet()) {
+                        sb.append("R").append(entry.getKey()).append(": ");
+                        String rhs = entry.getValue().stream().map(Object::toString).collect(Collectors.joining(","));
+                        sb.append(rhs).append("\n");
+                    }
+                    sb.append("SEQ:");
+                    for (int i = 0; i < finalGrammar.sequence().size(); i++) {
+                        sb.append(finalGrammar.sequence().get(i));
+                        if (i != finalGrammar.sequence().size() - 1) sb.append(",");
+                    }
+                    sb.append("\n\n");
+                    writer.write(sb.toString());
+                    log.accept(2, "Final grammar and stats written to " + output);
+                } catch (IOException e) {
+                    // ignore
                 }
-                sb.append("SEQ:");
-                for (int i = 0; i < finalGrammar.sequence().size(); i++) {
-                    sb.append(finalGrammar.sequence().get(i));
-                    if (i != finalGrammar.sequence().size() - 1) sb.append(",");
-                }
-                sb.append("\n\n");
-                writer.write(sb.toString());
-                log.accept("Final grammar and stats written to " + output);
-            } catch (IOException e) {
-                // No console prints, and no logging if not verbose
             }
 
-            // final flush of any remaining log buffers
-            if (verbose) {
+            if (verbosity > 0) {
                 try { logWriter.flush(); } catch (IOException ignore) {}
             }
 
         } catch (IOException e) {
-            // Failed to open log file or other IO setup; no console output and no logging
+            // ignore
         } finally {
             if (logWriter != null) {
                 try { logWriter.close(); } catch (IOException ignore) {}
             }
+            // the only console print
+            System.out.println("Recompression has finished");
         }
     }
-
 
 
 
@@ -752,6 +750,8 @@ public class Recompressor {
             uncrossNonRepeating(c1, c2, rules, metadata, artificialTerminals);
         }
         deleteEmptyRulesAndRewire(rules);
+
+
     }
 
 private static void uncrossNonRepeating(
@@ -1051,6 +1051,7 @@ private static void uncrossNonRepeating(
             // Update the rule with the new, modified right-hand side.
             entry.setValue(out);
         }
+
     }
 
 
@@ -1126,6 +1127,7 @@ private static void uncrossNonRepeating(
         for (int ruleId : unitRules) {
             rules.remove(ruleId);
         }
+
     }
 
     /**

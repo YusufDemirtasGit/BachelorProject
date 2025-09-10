@@ -155,7 +155,7 @@
                 Parser.ParsedGrammar excerpt = Extractor.extractExcerpt(grammar,Integer.parseInt(from), Integer.parseInt(to),false);
                 System.out.println("Excerpt extraction successful.");
                 System.out.println("Recompressing grammar...");
-                Recompressor.recompressNTimes(excerpt, Integer.parseInt(passesStr),Boolean.parseBoolean(verbosity),true,false,output);
+                Recompressor.recompressNTimes(excerpt, Integer.parseInt(passesStr),Integer.parseInt(verbosity),true,false,output);
                 System.out.println("Recompression successful. Resulting text file is saved as"+output);
 
                 return;
@@ -485,8 +485,10 @@
                         break;
 
                     case 13: {
-                        Path grammarFile13 = Path.of("LoremIpsum.txt");
-                        Parser.ParsedGrammar original = Parser.parseFile(grammarFile13);
+                        System.out.print("\nEnter the path to a human-readable grammar file: ");
+                        Path grammarFile17 = Path.of(scanner.nextLine().trim());
+//                        Path grammarFile13 = Path.of("A_tale_of_two_cities_translated.txt");
+                        Parser.ParsedGrammar original = Parser.parseFile(grammarFile17);
 
                         //  Step 1: Wrap with sentinels and create binary grammar
                         Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(original);
@@ -499,6 +501,7 @@
                                 initialized.grammarRules(), initialized.sequence(), newMetadata);
 
                         System.out.println("=== Running Roundtrip Bigram Frequency Test ===");
+
 
                         //  Step 4: Compute compressed-space frequency map (new logic)
                         Map<Pair<Integer, Integer>, Integer> advancedFreqs =
@@ -527,28 +530,28 @@
                         }
 
                         //  Step 7: Final Output
-                        System.out.println("=== Advanced Frequency Roundtrip Results ===");
-                        System.out.println(advancedFreqs);
+                        //System.out.println("=== Advanced Frequency Roundtrip Results ===");
+                        //System.out.println(advancedFreqs);
 
-                        System.out.println("=== Naive Frequency Roundtrip Results ===");
-                        System.out.println(naiveFreqs);
+                        //System.out.println("=== Naive Frequency Roundtrip Results ===");
+                        //System.out.println(naiveFreqs);
 
-                        System.out.println("\n=== Rule Metadata ===");
-                        for (Map.Entry<Integer, RuleMetadata> entry : parsed.metadata().entrySet()) {
-                            int ruleId = entry.getKey();
-                            RuleMetadata meta = entry.getValue();
-                            System.out.printf(
-                                    "R%d: vocc=%d, length=%d, leftmost=%s, rightmost=%s, singleBlock=%s, leftRun=%d, rightRun=%d%n",
-                                    ruleId,
-                                    meta.getVocc(),
-                                    meta.getLength(),
-                                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
-                                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
-                                    meta.isSingleBlock(),
-                                    meta.getLeftRunLength(),
-                                    meta.getRightRunLength()
-                            );
-                        }
+//                        System.out.println("\n=== Rule Metadata ===");
+//                        for (Map.Entry<Integer, RuleMetadata> entry : parsed.metadata().entrySet()) {
+//                            int ruleId = entry.getKey();
+//                            RuleMetadata meta = entry.getValue();
+//                            System.out.printf(
+//                                    "R%d: vocc=%d, length=%d, leftmost=%s, rightmost=%s, singleBlock=%s, leftRun=%d, rightRun=%d%n",
+//                                    ruleId,
+//                                    meta.getVocc(),
+//                                    meta.getLength(),
+//                                    meta.getLeftmostTerminal() == -1 ? "None" : formatSymbol(meta.getLeftmostTerminal()),
+//                                    meta.getRightmostTerminal() == -1 ? "None" : formatSymbol(meta.getRightmostTerminal()),
+//                                    meta.isSingleBlock(),
+//                                    meta.getLeftRunLength(),
+//                                    meta.getRightRunLength()
+//                            );
+//                        }
 
                         if (!mismatchFound) {
                             System.out.println(" All bigram frequencies match between compressed and naive method!");
@@ -560,9 +563,11 @@
                     }
 
                     case 14:
-                        Path grammarFile17 = Path.of("extracted_grammar.txt");
+                        System.out.print("\nEnter the path to a human-readable grammar file: ");
+                        Path grammarFile17 = Path.of(scanner.nextLine().trim());
+                        //Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,true,true,false, "output.txt");
+                        Recompressor.recompressNTimes(original17, 0,1,true,false, "output.txt");
 
                         break;
                     case 15: {
@@ -616,7 +621,7 @@
 
                         Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2,false);
                         Extractor.writeGrammarToFile(excerpt2, "extracted_grammar.txt");
-                        Recompressor.recompressNTimes(excerpt2, 0,true,true,true,"output.txt");
+                        Recompressor.recompressNTimes(excerpt2, 0,1,true,true,"output.txt");
 
 
                         //For debug purposes. The whole rule does not need to get dumped in the console in the final version
@@ -695,25 +700,26 @@
                 boolean removeSentinels,
                 boolean addSentinels
         ) {
+            long startTime = System.nanoTime();
             // Step 1: Decompress
             String decompressed = Decompressor.decompress(grammar);
 
             // Step 2: Add sentinels if requested
             if (addSentinels) {
                 decompressed = "#" + decompressed + "$";
-                System.out.println("Added sentinel characters '#' (start) and '$' (end) to decompressed string.");
+                //System.out.println("Added sentinel characters '#' (start) and '$' (end) to decompressed string.");
             }
 
             // Step 3: Remove sentinels if requested
             if (removeSentinels) {
                 decompressed = decompressed.replace("#", "").replace("$", "");
-                System.out.println("Removed sentinel characters '#' and '$' from decompressed string.");
+                //System.out.println("Removed sentinel characters '#' and '$' from decompressed string.");
             }
 
             Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
 
-            System.out.println("\n=== Starting Naive Bigram Frequency Computation from Decompressed String ===");
-            System.out.println("Decompressed: " + decompressed);
+            //System.out.println("\n=== Starting Naive Bigram Frequency Computation from Decompressed String ===");
+            //System.out.println("Decompressed: " + decompressed);
 
             Set<Integer> repeatingPositions = new HashSet<>();
 
@@ -730,7 +736,7 @@
                     int freq = len / 2;
                     Pair<Integer, Integer> bigram = Pair.of((int) a, (int) a);
                     bigramFreqs.merge(bigram, freq, Integer::sum);
-                    System.out.printf("Detected run %c^%d → (%c,%c) += %d%n", a, len, a, a, freq);
+                    //System.out.printf("Detected run %c^%d → (%c,%c) += %d%n", a, len, a, a, freq);
 
                     for (int p = i; p < j - 1; p++) {
                         repeatingPositions.add(p);
@@ -750,13 +756,14 @@
                 if (a != b) {
                     Pair<Integer, Integer> pair = Pair.of((int) a, (int) b);
                     bigramFreqs.merge(pair, 1, Integer::sum);
-                    System.out.printf("Non-repeating bigram (%c,%c) += 1%n", a, b);
+                    //System.out.printf("Non-repeating bigram (%c,%c) += 1%n", a, b);
                 } else {
-                    System.out.printf("Skipping (a,a) at [%d,%d] – handled by run detection%n", k, k + 1);
+                    //System.out.printf("Skipping (a,a) at [%d,%d] – handled by run detection%n", k, k + 1);
                 }
             }
-
+            long endTime = System.nanoTime();
             System.out.println("=== Completed Naive Bigram Frequency Computation ===");
+            System.out.println("Time required for naive in total: " + (endTime - startTime) / 1_000_000 + "ms");
             return bigramFreqs;
         }
 
