@@ -1,5 +1,6 @@
     package grammarextractor;
 
+    import java.nio.file.Files;
     import java.nio.file.Path;
     import java.nio.file.Paths;
     import java.util.*;
@@ -669,6 +670,66 @@
                         }
 
                         return;
+                    case 19: {
+                        try {
+                            System.out.println("\nPlease enter the input text file to extract from:");
+                            Path inputPath = Paths.get(scanner.nextLine().trim());
+
+                            System.out.println("Enter start position (inclusive):");
+                            int from3 = Integer.parseInt(scanner.nextLine().trim());
+
+                            System.out.println("Enter end position (exclusive):");
+                            int to3 = Integer.parseInt(scanner.nextLine().trim());
+
+                            long tTotalStart = System.nanoTime();
+
+                            // --- Parsing (read file) ---
+                            long tParseStart = System.nanoTime();
+                            String content = new String(Files.readAllBytes(inputPath), java.nio.charset.StandardCharsets.UTF_8);
+                            long tParseEnd = System.nanoTime();
+
+                            int len = content.length();
+                            if (from3 < 0 || to3 < from3 || to3 > len) {
+                                System.err.printf(
+                                        "\nInvalid range: from=%d, to=%d. Valid range is [0, %d], and from <= to.%n",
+                                        from3, to3, len
+                                );
+                                break;
+                            }
+
+                            // --- Extraction (substring) ---
+                            long tExtractStart = System.nanoTime();
+                            String slice = content.substring(from3, to3);
+                            long tExtractEnd = System.nanoTime();
+
+                            // Save output next to the input file
+                            String baseName = inputPath.getFileName().toString();
+                            Path outPath = inputPath.resolveSibling(baseName + ".slice_" + from3 + "_" + to3 + ").txt");
+                            Files.write(outPath, slice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+                            long tTotalEnd = System.nanoTime();
+
+                            double parseMs   = (tParseEnd   - tParseStart)   / 1_000_000.0;
+                            double extractMs = (tExtractEnd - tExtractStart) / 1_000_000.0;
+                            double totalMs   = (tTotalEnd   - tTotalStart)   / 1_000_000.0;
+
+                            System.out.printf("%nParsing time:   %.3f ms%n", parseMs);
+                            System.out.printf("Extraction time: %.3f ms%n", extractMs);
+                            System.out.printf("Total time:      %.3f ms%n", totalMs);
+
+                            System.out.println("\nExtraction successful.");
+                            System.out.println("Output saved as: " + outPath.toAbsolutePath());
+
+                        } catch (NumberFormatException nfe) {
+                            System.err.println("\nStart/end positions must be integers.");
+                        } catch (java.nio.file.NoSuchFileException nsfe) {
+                            System.err.println("\nFile not found: " + nsfe.getFile());
+                        } catch (Exception e) {
+                            System.err.println("\nUnexpected error: " + e.getMessage());
+                            e.printStackTrace(System.err);
+                        }
+                        break;
+                    }
                     case 99:
                         System.exit(0);
                         break;
