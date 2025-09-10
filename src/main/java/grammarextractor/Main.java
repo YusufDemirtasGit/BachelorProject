@@ -730,6 +730,103 @@
                         }
                         break;
                     }
+                    case 20: {
+                        System.out.println("\nPlease enter the human readable input file you would like to extract from:");
+                        Path humanReadableIn = Paths.get(scanner.nextLine()).toAbsolutePath();
+
+                        // 1) Decode initial binary -> input_translated.txt
+                        ProcessBuilder builder20 = new ProcessBuilder("./decoder_mac", humanReadableIn.toString(), "input_translated.txt");
+                        builder20.inheritIO();
+                        Process process20 = builder20.start();
+                        int exitCode20 = process20.waitFor();
+                        if (exitCode20 != 0) {
+                            System.err.println("\nDecoder failed with exit code " + exitCode20);
+                            break;
+                        }
+                        System.out.println("\nBinary file translated successfully. The result is saved under input_translated.txt");
+
+                        System.out.println("\nParsing the grammar");
+                        Parser.ParsedGrammar parsedGrammar20 = Parser.parseFile(Paths.get("input_translated.txt"));
+
+                        String output20 = Decompressor.decompress(parsedGrammar20);
+                        try (PrintWriter out = new PrintWriter("output.txt", java.nio.charset.StandardCharsets.UTF_8)) {
+                            out.println(output20);
+                            System.out.println("\nDecompression successful. Resulting text file is saved as output.txt");
+                        } catch (FileNotFoundException e) {
+                            throw e; // preserve original
+                        }
+
+                        // 2) Ask for slice range
+                        Path inputPath = Paths.get("input_translated.txt").toAbsolutePath();
+                        String baseName = inputPath.getFileName().toString();        // e.g., "input_translated.txt"
+                        String stem = baseName;
+                        int dot = stem.lastIndexOf('.');
+                        if (dot > 0) stem = stem.substring(0, dot);                   // -> "input_translated"
+
+                        System.out.println("Enter start position (inclusive):");
+                        int from3 = Integer.parseInt(scanner.nextLine().trim());
+
+                        System.out.println("Enter end position (exclusive):");
+                        int to3 = Integer.parseInt(scanner.nextLine().trim());
+
+                        int len = output20.length();
+                        if (from3 < 0 || to3 < from3 || to3 > len) {
+                            System.err.printf(
+                                    "\nInvalid range: from=%d, to=%d. Valid range is [0, %d], and from <= to.%n",
+                                    from3, to3, len
+                            );
+                            break;
+                        }
+
+                        long tTotalStart = System.nanoTime();
+
+                        // 3) Extract and write slice
+                        long tExtractStart = System.nanoTime();
+                        String slice = output20.substring(from3, to3);
+                        long tExtractEnd = System.nanoTime();
+
+                        Path outPath = inputPath.resolveSibling(stem + ".slice_" + from3 + "_" + to3 + ".txt");
+                        Files.write(outPath, slice.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+                        // 4) Encode the slice -> expect encoder to create outPath + ".rp"
+                        ProcessBuilder builder21 = new ProcessBuilder("./encoder_mac", outPath.toString());
+                        builder21.inheritIO();
+                        Process process21 = builder21.start();
+                        int exitCode21 = process21.waitFor();
+                        if (exitCode21 != 0) {
+                            System.err.println("\nEncoder failed with exit code " + exitCode21);
+                            break;
+                        }
+
+                        Path encodedPath = outPath.resolveSibling(outPath.getFileName().toString() + ".rp");
+                        System.out.println("\nSlice encoded successfully. Assuming encoder output: " + encodedPath);
+
+                        // 5) Decode the encoded slice to verify roundtrip
+                        Path decodedSlicePath = outPath.resolveSibling(stem + ".slice_" + from3 + "_" + to3 + ".decoded.txt");
+                        ProcessBuilder builder22 = new ProcessBuilder("./decoder_mac", encodedPath.toString(), decodedSlicePath.toString());
+                        builder22.inheritIO();
+                        Process process22 = builder22.start();
+                        int exitCode22 = process22.waitFor();
+                        if (exitCode22 != 0) {
+                            System.err.println("\nDecoder failed with exit code " + exitCode22);
+                            break;
+                        }
+                        System.out.println("\nBinary slice translated successfully. The result is saved under " + decodedSlicePath);
+
+                        long tTotalEnd = System.nanoTime();
+
+                        double extractMs = (tExtractEnd - tExtractStart) / 1_000_000.0;
+                        double totalMs   = (tTotalEnd   - tTotalStart)   / 1_000_000.0;
+
+                        System.out.printf("Extraction time: %.3f ms%n", extractMs);
+                        System.out.printf("Total time:      %.3f ms%n", totalMs);
+
+                        System.out.println("\nExtraction successful.");
+                        System.out.println("Slice saved as:      " + outPath.toAbsolutePath());
+                        System.out.println("Encoded slice:       " + encodedPath.toAbsolutePath());
+                        System.out.println("Decoded verification:" + decodedSlicePath.toAbsolutePath());
+                        break;
+                    }
                     case 99:
                         System.exit(0);
                         break;
