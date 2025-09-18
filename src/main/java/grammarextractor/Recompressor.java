@@ -108,7 +108,7 @@ public class Recompressor {
                         artificialTerminals
                 );
                 long metaEndNs = System.nanoTime();
-                log.accept(2, "Time for metadata computation: " + (metaEndNs - metaStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for metadata computation: " +(double) (metaEndNs - metaStartNs) / 1_000_000 + "ms");
 
                 Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
 
@@ -123,7 +123,7 @@ public class Recompressor {
                                 msg -> log.accept(3, msg)
                         );
                 long freqEndNs = System.nanoTime();
-                log.accept(2, "Time for bigram frequency computation: " + (freqEndNs - freqStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for bigram frequency computation: " +(double) (freqEndNs - freqStartNs) / 1_000_000 + "ms");
 
                 if (frequencies.isEmpty()) {
                     log.accept(3, " No bigrams found. Stopping recompression.");
@@ -134,7 +134,7 @@ public class Recompressor {
                 long pickStartNs = System.nanoTime();
                 Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
                 long pickEndNs = System.nanoTime();
-                log.accept(2, "Time to pick most frequent bigram: " + (pickEndNs - pickStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time to pick most frequent bigram: " +(double) (pickEndNs - pickStartNs) / 1_000_000 + "ms");
 
                 if (bigram == null || frequencies.getOrDefault(bigram, 0) <= 1) {
                     log.accept(3, "No more compressible bigrams (all <= 1 occurrence).");
@@ -150,13 +150,13 @@ public class Recompressor {
                 long uncrossStartNs = System.nanoTime();
                 uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
                 long uncrossEndNs = System.nanoTime();
-                log.accept(2, "Time for uncrossing bigrams: " + (uncrossEndNs - uncrossStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for uncrossing bigrams: " +(double) (uncrossEndNs - uncrossStartNs) / 1_000_000 + "ms");
 
                 // --- replace ---
                 long replaceStartNs = System.nanoTime();
                 replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
                 long replaceEndNs = System.nanoTime();
-                log.accept(2, "Time for replacing bigram with new rule: " + (replaceEndNs - replaceStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for replacing bigram with new rule: " +(double) (replaceEndNs - replaceStartNs) / 1_000_000 + "ms");
 
                 artificialRules.put(newRuleId, List.of(c1, c2));
                 artificialTerminals.add(newRuleId);
@@ -165,11 +165,11 @@ public class Recompressor {
                 long pruneStartNs = System.nanoTime();
                 removeRedundantRules(rules, sequence);
                 long pruneEndNs = System.nanoTime();
-                log.accept(2, "Time for removing redundant rules: " + (pruneEndNs - pruneStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for removing redundant rules: " +(double) (pruneEndNs - pruneStartNs) / 1_000_000 + "ms");
 
                 // --- per-pass total (before roundtrip to isolate transform time) ---
                 long preRoundtripEndNs = System.nanoTime();
-                log.accept(2, "Time for pass core (metadata->prune): " + (preRoundtripEndNs - metaStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for pass core (metadata->prune): " +(double) (preRoundtripEndNs - metaStartNs) / 1_000_000 + "ms");
 
                 // --- roundtrip check (timed) ---
                 if (roundtrip) {
@@ -177,12 +177,12 @@ public class Recompressor {
                     long buildStartNs = System.nanoTime();
                     Parser.ParsedGrammar combined = buildCombinedGrammar(rules, artificialRules, sequence, metadata);
                     long buildEndNs = System.nanoTime();
-                    log.accept(2, "Time to build combined grammar: " + (buildEndNs - buildStartNs) / 1_000_000 + "ms");
+                    log.accept(2, "Time to build combined grammar: " +(double) (buildEndNs - buildStartNs) / 1_000_000 + "ms");
 
                     long decompStartNs = System.nanoTime();
                     String after = Decompressor.decompress(combined);
                     long decompEndNs = System.nanoTime();
-                    log.accept(2, "Time to decompress for roundtrip: " + (decompEndNs - decompStartNs) / 1_000_000 + "ms");
+                    log.accept(2, "Time to decompress for roundtrip: " +(double) (decompEndNs - decompStartNs) / 1_000_000 + "ms");
 
                     if (!before.equals(after)) {
                         log.accept(3, "Roundtrip mismatch detected! Stopping at pass " + pass);
@@ -193,7 +193,7 @@ public class Recompressor {
                 }
 
                 long passEndNs = System.nanoTime();
-                log.accept(1, "Time required for Pass " + pass + ": " + (passEndNs - passStartNs) / 1_000_000 + "ms");
+                log.accept(1, "Time required for Pass " + pass + ": " +(double) (passEndNs - passStartNs) / 1_000_000 + "ms");
 
                 if (verbosity > 0) {
                     try { logWriter.flush(); } catch (IOException ignore) {}
@@ -226,7 +226,7 @@ public class Recompressor {
             log.accept(1, "Reduction in size=" + (1 - finalsize/startsize) * 100 + "%");
 
             long endTime = System.nanoTime();
-            log.accept(1, "Time required in total: " + (endTime - startTime) / 1_000_000 + "ms");
+            log.accept(1, "Time required in total: " +(double) (endTime - startTime) / 1_000_000 + "ms");
 
             // Write final grammar to file
             if (verbosity > 0) {
@@ -374,7 +374,7 @@ public class Recompressor {
             context.add(rhs.get(i));
         }
 
-        // Process last element (if different from first)
+        // Process last element
         if (rhs.size() > 1) {
             int lastElement = rhs.get(rhs.size() - 1);
             if (lastElement < 256 || artificialTerminals.contains(lastElement)) {
