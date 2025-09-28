@@ -10,9 +10,10 @@
         public static void main(String[] args) throws IOException, InterruptedException {
             System.out.println("Welcome to the Grammar Extractor & Recompressor CLI!");
             System.out.println("=============================");
+            
+
             System.out.println("This CLI is used to extract and recompress grammars from a file.");
             System.out.println("Initializing...");
-
             // List of filenames to check and update permissions for
             String[] filesToCheck = { "encoder_mac", "decoder_mac"};
 
@@ -189,11 +190,11 @@
             Scanner scanner = new Scanner(System.in);
             do {
                 System.out.println("\nWhich mode would you like to use?\n");
-                System.out.println("1.  Compress");
-                System.out.println("2.  Compress (Gonzales) — not implemented");
-                System.out.println("3.  Decompress");
-                System.out.println("4.  Decompress (Gonzales) — not implemented");
-                System.out.println("5.  Roundtrip (random or file)");
+                System.out.println("1.  Compress - Serp");
+                System.out.println("2.  Compress (Gonzales) - not implemented");
+                System.out.println("3.  Decompress - Serp");
+                System.out.println("4.  Decompress (Gonzales) - not implemented");
+                System.out.println("5.  Compression/Decompression Roundtrip (random or file)");
                 System.out.println("6.  Extract excerpt");
                 System.out.println("7.  Create human-readable grammar from .rp");
                 System.out.println("8.  Decompress human-readable grammar back into string");
@@ -204,7 +205,7 @@
                 System.out.println("13. Roundtrip frequency comparison(naive vs recomp)");
                 System.out.println("14. Recompress N times (stress test)");
                 System.out.println("15. Naive bigram frequencies from decompressed text");
-                System.out.println("17. Excerpt → recompress (experimental)");
+                System.out.println("17. Excerpt then recompress ");
                 System.out.println("18. Uncross bigrams test ");
                 System.out.println("99. Exit");
 
@@ -496,6 +497,7 @@
                         Parser.ParsedGrammar initialized = init.grammar();
                         Set<Integer> artificial = init.artificialTerminals(); // Gets the set from initialization
 
+                        long tTotalStart = System.nanoTime();
                         //  Step 2: Compute metadata with artificial terminals
                         Map<Integer, RuleMetadata> newMetadata = RuleMetadata.computeAll(initialized, artificial);
                         Parser.ParsedGrammar parsed = new Parser.ParsedGrammar(
@@ -507,6 +509,9 @@
                         //  Step 4: Compute compressed-space frequency map (new logic)
                         Map<Pair<Integer, Integer>, Integer> advancedFreqs =
                                 Recompressor.computeBigramFrequencies(parsed, artificial,false,null);
+                        long tTotalEnd = System.nanoTime();
+
+                        System.out.println("Time for advanced frequency computation: " + (tTotalEnd - tTotalStart) / 1_000_000 + "ms");
 
                         //  Step 5: Compute naive decompression-based frequency map
                         Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(parsed,false,false);
@@ -568,7 +573,7 @@
                         Path grammarFile17 = Path.of(scanner.nextLine().trim());
                         //Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,1,true,false, "output.txt");
+                        Recompressor.recompressNTimes(original17, 0,2,true,false, "output.txt");
 
                         break;
                     case 15: {
@@ -621,8 +626,8 @@
                         Parser.ParsedGrammar grammar2 = Parser.parseFile(Paths.get(compressedGrammarFileName2));
 
                         Parser.ParsedGrammar excerpt2 = Extractor.extractExcerpt(grammar2, from2, to2,false);
-                        Extractor.writeGrammarToFile(excerpt2, "extracted_grammar.txt");
-                        Recompressor.recompressNTimes(excerpt2, 0,1,true,true,"output.txt");
+
+                        Recompressor.recompressNTimes(excerpt2, 0,2,true,false,"output.txt");
 
 
                         //For debug purposes. The whole rule does not need to get dumped in the console in the final version
@@ -734,19 +739,9 @@
                         System.out.println("\nPlease enter the human readable input file you would like to extract from:");
                         Path humanReadableIn = Paths.get(scanner.nextLine()).toAbsolutePath();
 
-                        // 1) Decode initial binary -> input_translated.txt
-                        ProcessBuilder builder20 = new ProcessBuilder("./decoder_mac", humanReadableIn.toString(), "input_translated.txt");
-                        builder20.inheritIO();
-                        Process process20 = builder20.start();
-                        int exitCode20 = process20.waitFor();
-                        if (exitCode20 != 0) {
-                            System.err.println("\nDecoder failed with exit code " + exitCode20);
-                            break;
-                        }
-                        System.out.println("\nBinary file translated successfully. The result is saved under input_translated.txt");
 
                         System.out.println("\nParsing the grammar");
-                        Parser.ParsedGrammar parsedGrammar20 = Parser.parseFile(Paths.get("input_translated.txt"));
+                        Parser.ParsedGrammar parsedGrammar20 = Parser.parseFile(humanReadableIn);
 
                         String output20 = Decompressor.decompress(parsedGrammar20);
                         try (PrintWriter out = new PrintWriter("output.txt", java.nio.charset.StandardCharsets.UTF_8)) {
@@ -827,6 +822,26 @@
                         System.out.println("Decoded verification:" + decodedSlicePath.toAbsolutePath());
                         break;
                     }
+                    case 21:
+                        System.out.println("Enter the file name of the compressed grammar:");
+                        String compressedGrammarFileName21 = scanner.nextLine().trim();
+
+
+                        System.out.println("Parsing the grammar...");
+                        Parser.ParsedGrammar grammar21 = Parser.parseFile(Paths.get(compressedGrammarFileName21));
+                        System.out.println("Size of the grammar is :" + Parser.sizeOfGrammar(grammar21));
+
+
+
+
+
+                        //For debug purposes. The whole rule does not need to get dumped in the console in the final version
+
+                        //                    for (int rule : excerpt.sequence()) {
+                        //                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
+                        //                    }
+                        break;
+
                     case 99:
                         System.exit(0);
                         break;
