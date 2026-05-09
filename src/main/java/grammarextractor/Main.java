@@ -53,6 +53,12 @@
                 return;
             }
 
+            // Option 22: launch the GUI file-picker + analyzer
+            if (args.length == 1 && args[0].equals("22")) {
+                GrammarApp.launch();
+                return;
+            }
+
             // Simple CLI parsing
             List<String> argList = Arrays.asList(args);
             if (argList.contains("-h") || argList.contains("--help")) {
@@ -207,6 +213,7 @@
                 System.out.println("15. Naive bigram frequencies from decompressed text");
                 System.out.println("17. Excerpt then recompress ");
                 System.out.println("18. Uncross bigrams test ");
+                System.out.println("22. Launch GUI  (file picker + animation/technical mode)");
                 System.out.println("99. Exit");
 
                 System.out.print("Enter your choice: ");
@@ -573,7 +580,7 @@
                         Path grammarFile17 = Path.of(scanner.nextLine().trim());
                         //Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,2,true,false, "output.txt");
+                        Recompressor.recompressNTimes(original17, 0,3,true,true, "Paper_Test_recompressed.txt");
 
                         break;
                     case 15: {
@@ -840,6 +847,10 @@
                         //                    for (int rule : excerpt.sequence()) {
                         //                        System.out.println(rule < 256 ? "'" + (char) rule + "'" : "Non-terminal: " + rule);
                         //                    }
+                        break;
+
+                    case 22:
+                        GrammarApp.launch();
                         break;
 
                     case 99:

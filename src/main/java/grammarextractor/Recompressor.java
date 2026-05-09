@@ -339,10 +339,7 @@ public class Recompressor {
     }
 
 
-    /**
-     * Builds the context ρ(X′) · w_X · λ(X`) for a given rule RHS.
-     * Artificial terminals are treated as normal terminals.
-     */
+    // Materializes ρ(X') · w_X · λ(X`): rightmost run of the first child + middle symbols + leftmost run of the last child.
     private static List<Integer> buildContext(
             List<Integer> rhs,
             Map<Integer, RuleMetadata> metadata,
@@ -659,27 +656,99 @@ public class Recompressor {
 //        return merged;
 //    }
 
+    /**
+     * Single-pass combined computation of non-repeating and repeating bigram frequencies.
+     * Replaces two separate iterations over all rules with one, halving the number of buildContext calls.
+     */
+    public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequenciesCombined(
+            Parser.ParsedGrammar grammar,
+            Set<Integer> artificialTerminals,
+            boolean verbose,
+            Consumer<String> log
+    ) {
+        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
+        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+        Map<Integer, RuleMetadata> metadata = grammar.metadata();
+
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            int ruleId = entry.getKey();
+            if (artificialTerminals.contains(ruleId)) continue;
+
+            RuleMetadata xMeta = metadata.get(ruleId);
+            if (xMeta == null) continue;
+            int vocc = xMeta.getVocc();
+
+            List<Integer> rhs = entry.getValue();
+            if (rhs == null || rhs.isEmpty()) continue;
+
+            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+            if (verbose && log != null) {
+                log.accept("context for rule " + ruleId + ": " + context);
+            }
+
+            int X1 = rhs.get(0);
+            int X2 = rhs.get(rhs.size() - 1);
+            boolean leftIsTerminalOrSingleBlock  = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
+            boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
+
+            int i = 0;
+            while (i < context.size()) {
+                int c = context.get(i);
+                // Find run end
+                int j = i + 1;
+                while (j < context.size() && context.get(j) == c) j++;
+                int d = j - i;
+
+                if (d == 1) {
+                    // Non-repeating: count (c, next) if next differs
+                    if (j < context.size()) {
+                        int c2 = context.get(j);
+                        if (c2 != c) {
+                            freqMap.merge(Pair.of(c, c2), vocc, Integer::sum);
+                            if (verbose && log != null) {
+                                log.accept("added non-repeating pair (" + c + "," + c2 + ") " + vocc + " times");
+                            }
+                        }
+                    }
+                } else {
+                    // Run of length >= 2: repeating bigram (c,c)
+                    boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
+                    boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
+
+                    if (!isPrefixRun && !isSuffixRun) {
+                        int add = (d / 2) * vocc;
+                        if (add > 0) {
+                            freqMap.merge(Pair.of(c, c), add, Integer::sum);
+                            if (verbose && log != null) {
+                                log.accept("added repeating pair (" + c + "," + c + ") " + add + " times");
+                            }
+                        }
+                    }
+
+                    // Also count the transition from last c in this run to the next different symbol
+                    if (j < context.size()) {
+                        int c2 = context.get(j);
+                        if (c2 != c) {
+                            freqMap.merge(Pair.of(c, c2), vocc, Integer::sum);
+                            if (verbose && log != null) {
+                                log.accept("added non-repeating pair (" + c + "," + c2 + ") " + vocc + " times");
+                            }
+                        }
+                    }
+                }
+                i = j;
+            }
+        }
+        return freqMap;
+    }
+
     public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
             boolean verbose,
             Consumer<String> log
     ) {
-        Map<Pair<Integer, Integer>, Integer> nonRep =
-                computeNonRepeatingFrequencies(grammar, artificialTerminals, verbose, log);
-        Map<Pair<Integer, Integer>, Integer> rep =
-                computeRepeatingFrequencies(grammar, artificialTerminals, verbose, log);
-
-        Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRep);
-        for (Map.Entry<Pair<Integer, Integer>, Integer> e : rep.entrySet()) {
-            merged.merge(e.getKey(), e.getValue(), Integer::sum);
-        }
-
-        if (verbose && log != null) {
-            log.accept("Merged bigram frequencies: " + merged);
-        }
-
-        return merged;
+        return computeBigramFrequenciesCombined(grammar, artificialTerminals, verbose, log);
     }
 
 
@@ -690,9 +759,8 @@ public class Recompressor {
     }
 
 
-    /**
-     * It brings a CFG into an SLP form. Necessary for the repeating bigram frequencies (so that i-1 and j+1 is always a correct interval).
-     **/
+    // Sentinels '#' (35) and '$' (36) ensure every boundary run has a distinct non-equal neighbor,
+    // so the maximality witness condition (i-1 and j+1 exist and differ) always holds.
     public static InitializedGrammar initializeWithSentinelsAndRootRule(Parser.ParsedGrammar original) {
         Map<Integer, List<Integer>> oldRules = original.grammarRules();
         List<Integer> originalSeq = original.sequence();
@@ -754,6 +822,8 @@ public class Recompressor {
 
     }
 
+// popOutlet: boundary terminals matching c2 (leftmost) or c1 (rightmost) are popped out of their position;
+// popInlet: c2/c1 are re-inserted next to interior nonterminals whose boundary terminal matches.
 private static void uncrossNonRepeating(
         int c1,
         int c2,
@@ -811,9 +881,8 @@ private static void uncrossNonRepeating(
     }
 }
 
-    //For the repeating Case I strongly deviate from the paper implementation. I am not sure if this is the best way to do it, but it works.
-    //Basically for the popOutlet I delete the explicit and implicit runs of c in the beginning and end of the RHS.
-    //An important thing is to remember whether the not deleted nonterminals were first or last in their respective rhs BEFORE we delete the runs (Similar to non-repeating in that case).
+    // popOutlet: strips the boundary run of c from both ends of each RHS (explicit terminals and single-block nonterminals),
+    // then re-inserts left/right runs of c around interior nonterminals (popInlet) so those boundaries stay explicit.
     private static void uncrossRepeating(
             int c,
             Map<Integer, List<Integer>> rules,
@@ -915,10 +984,10 @@ private static void uncrossNonRepeating(
 
         while (changed) {
             // 1. Find rules that are empty (no RHS symbols)
-            Set<Integer> emptyRules = rules.entrySet().stream()
-                    .filter(e -> e.getValue().isEmpty())
-                    .map(Map.Entry::getKey)
-                    .collect(Collectors.toSet());
+            Set<Integer> emptyRules = new HashSet<>();
+            for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+                if (e.getValue().isEmpty()) emptyRules.add(e.getKey());
+            }
 
             if (emptyRules.isEmpty()) {
                 break; // No empty rules left, stop

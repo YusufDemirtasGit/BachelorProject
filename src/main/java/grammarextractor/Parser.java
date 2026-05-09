@@ -1,6 +1,8 @@
 package grammarextractor;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -13,19 +15,31 @@ public class Parser {
 
     public static ParsedGrammar parseFile(Path inputFile) throws IOException {
         long startTime = System.nanoTime();
-        Map<Integer, List<Integer>> grammarRules = new HashMap<>();
+        // BufferedReader is ~5x faster than Scanner for large files.
+        ParsedGrammar result;
+        try (BufferedReader reader = Files.newBufferedReader(inputFile)) {
+            result = parseFrom(reader);
+        }
+        long endTime   = System.nanoTime();
+        System.out.println("Time required for parsing in total" + ":" + (endTime - startTime) / 1_000_000 + "ms");
+        return result;
+    }
+
+    /** Package-private: parse grammar from an already-open BufferedReader (enables tests without file I/O). */
+    static ParsedGrammar parseFrom(BufferedReader reader) throws IOException {
+        // Pre-size to avoid rehashing on typical grammars.
+        Map<Integer, List<Integer>> grammarRules = new HashMap<>(256);
         List<Integer> sequence = new ArrayList<>();
         List<String> ruleLines = new ArrayList<>();
 
-        try (Scanner scanner = new Scanner(inputFile.toFile())) {
-            while (scanner.hasNextLine()) {
-                String line = scanner.nextLine().trim();
-                if (line.startsWith("R")) {
-                    ruleLines.add(line);
-                } else if (line.startsWith("SEQ:")) {
-                    for (String token : line.substring(4).split(",")) {
-                        sequence.add(Integer.parseInt(token.trim()));
-                    }
+        String line;
+        while ((line = reader.readLine()) != null) {
+            line = line.trim();
+            if (line.startsWith("R")) {
+                ruleLines.add(line);
+            } else if (line.startsWith("SEQ:")) {
+                for (String token : line.substring(4).split(",")) {
+                    sequence.add(Integer.parseInt(token.trim()));
                 }
             }
         }
@@ -34,7 +48,7 @@ public class Parser {
             String[] split = ruleLine.substring(1).split(":");
             int ruleId = Integer.parseInt(split[0].trim());
             String[] rhsTokens = split[1].split(",");
-            List<Integer> rhs = new ArrayList<>();
+            List<Integer> rhs = new ArrayList<>(rhsTokens.length);
             for (String token : rhsTokens) {
                 rhs.add(Integer.parseInt(token.trim()));
             }
@@ -46,11 +60,6 @@ public class Parser {
 
         // 2. Compute metadata (empty set for artificial terminals)
         Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(partialGrammar, Collections.emptySet());
-
-        long endTime   = System.nanoTime();
-        long totalTime = endTime - startTime;
-        System.out.println("Time required for parsing in total" + ":" +totalTime/1000000 + "ms");
-
 
         // 3. Return full grammar
         return new ParsedGrammar(grammarRules, sequence, metadata);

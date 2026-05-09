@@ -71,21 +71,13 @@ public class RuleMetadata {
 
         return meta;
     }
-    /**
-     * Computes the virtual occurrences (vocc) of each rule in the grammar.
-     * A rule's vocc is the total number of times it is expanded, starting from the main sequence.
-     * This is calculated by summing its direct occurrences in the sequence and all its indirect
-     * occurrences from other rules that use it. The method uses a topological sort of the grammar
-     * dependency graph to ensure counts are propagated correctly.
-     *
-     * @param rules The grammar rules, mapping a rule ID to its right-hand side (RHS) symbols.
-     * @param sequence The initial sequence of symbols that forms the root of the derivation.
-     * @return A map from each rule ID to its total virtual occurrence count.
-     */
+    // Topological sort (Kahn's algorithm) ensures parent counts are finalized before propagating to children.
     private static Map<Integer, Integer> computeVocc(Map<Integer, List<Integer>> rules, List<Integer> sequence) {
-        Map<Integer, Integer> vocc = new HashMap<>();
-        Map<Integer, Integer> inDegree = new HashMap<>();
-        List<Integer> processingOrder = new ArrayList<>();
+        // Pre-size to avoid rehashing; rules.containsKey replaces a separate inDegree.containsKey.
+        int cap = (int)(rules.size() * 1.5) + 1;
+        Map<Integer, Integer> vocc = new HashMap<>(cap);
+        Map<Integer, Integer> inDegree = new HashMap<>(cap);
+        List<Integer> processingOrder = new ArrayList<>(rules.size());
         Queue<Integer> queue = new LinkedList<>();
 
         //Initialize in-degree and vocc maps for all non-terminals.
@@ -97,7 +89,7 @@ public class RuleMetadata {
         //Calculate the in-degree for each rule, which is the number of times it's used by other rules.
         for (List<Integer> rhs : rules.values()) {
             for (int symbol : rhs) {
-                if (inDegree.containsKey(symbol)) { // Check if the symbol is a non-terminal.
+                if (rules.containsKey(symbol)) { // inDegree is keyed exactly by rules.keySet()
                     inDegree.put(symbol, inDegree.get(symbol) + 1);
                 }
             }
@@ -118,7 +110,7 @@ public class RuleMetadata {
 
             // For each rule used by u, decrement its in-degree.
             for (int v : rules.get(u)) {
-                if (inDegree.containsKey(v)) { // If v is a non-terminal.
+                if (rules.containsKey(v)) { // inDegree is keyed exactly by rules.keySet()
                     int newDegree = inDegree.get(v) - 1;
                     inDegree.put(v, newDegree);
                     if (newDegree == 0) {
@@ -135,7 +127,7 @@ public class RuleMetadata {
 
         //Initialize vocc with direct occurrences in the main sequence.
         for (int symbol : sequence) {
-            if (vocc.containsKey(symbol)) {
+            if (rules.containsKey(symbol)) {
                 vocc.put(symbol, vocc.get(symbol) + 1);
             }
         }
@@ -149,7 +141,7 @@ public class RuleMetadata {
 
             // Add this rule's vocc to the vocc of each non-terminal it uses.
             for (int v : rules.get(u)) {
-                if (vocc.containsKey(v)) {
+                if (rules.containsKey(v)) {
                     vocc.put(v, vocc.get(v) + voccOfU);
                 }
             }
