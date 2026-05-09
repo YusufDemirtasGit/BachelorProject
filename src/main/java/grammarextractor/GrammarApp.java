@@ -15,8 +15,11 @@ import java.util.concurrent.*;
 /**
  * Multi-screen GUI application for the RePair recompression algorithm.
  *
- * Screen flow: File Picker → Mode Picker → Animation Mode (RecompressionViewer)
- *                                        → Technical Mode (config → run → report)
+ * Screen flow:
+ *   Mode Picker → Animation Mode → File Picker → RecompressionViewer
+ *               → Technical Mode → source toggle:
+ *                     "Generate random text" → config form → report
+ *                     "Use existing file"    → file list   → report
  *
  * Launch: java -jar grammarextractor.jar 22    OR    choose option 22 in the interactive menu.
  */
@@ -62,10 +65,16 @@ public class GrammarApp extends JFrame {
     private final JPanel     deck  = new JPanel(cards);
 
     // Technical-screen component refs (set during build)
-    private JSpinner  spN, spPasses, spFrom, spTo;
+    private JTextField tfLength;     // text length — plain field, no upper-bound restriction
+    private JSpinner   spPasses, spFrom, spTo;
     private JTextField tfAlphabet;
-    private JPanel    reportHolder;
+    private JPanel     reportHolder;
     private JSplitPane techSplit;
+
+    // Source selection in technical mode
+    private boolean useExistingFile = false;  // false = generate random text
+    private Path    techSelectedFile = null;
+    private Parser.ParsedGrammar techLoadedGrammar = null;
 
     // ── Entry points ──────────────────────────────────────────────────────────
     public static void launch() {
@@ -78,14 +87,14 @@ public class GrammarApp extends JFrame {
         getContentPane().setBackground(C_BG);
 
         deck.setBackground(C_BG);
-        deck.add(buildFilePicker(),  "file");
-        deck.add(buildModePicker(),  "mode");
-        deck.add(buildTechnical(),   "technical");
+        deck.add(buildModePicker(),  "mode");      // first screen
+        deck.add(buildFilePicker(),  "file");      // animation mode → pick file
+        deck.add(buildTechnical(),   "technical"); // technical mode
         add(deck);
 
         setSize(1250, 820);
         setLocationRelativeTo(null);
-        cards.show(deck, "file");
+        cards.show(deck, "mode");
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -95,7 +104,7 @@ public class GrammarApp extends JFrame {
     private JPanel buildFilePicker() {
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(C_BG);
-        root.add(header("  RePair Grammar Lab   ·   Choose a file"), BorderLayout.NORTH);
+        root.add(header("  Animation Mode   ·   Choose a grammar file to visualize"), BorderLayout.NORTH);
 
         // ── Left: file list ──────────────────────────────────────────────────
         DefaultListModel<Path> model = new DefaultListModel<>();
@@ -168,37 +177,41 @@ public class GrammarApp extends JFrame {
 
         // ── Bottom bar ───────────────────────────────────────────────────────
         JPanel bot = navBar();
-        JButton next = accentBtn("Continue  ▶");
-        next.addActionListener(e -> {
+        JButton back = plainBtn("◀  Back");
+        back.addActionListener(e -> cards.show(deck, "mode"));
+        JButton open = accentBtn("🎬  Open Visualizer");
+        open.addActionListener(e -> {
             if (selectedFile == null) {
                 JOptionPane.showMessageDialog(this, "Select a file first.", "No file", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             try {
-                String txt = Files.readString(selectedFile);
-                if (txt.startsWith("R") || txt.contains("\nSEQ:")) {
-                    loadedGrammar = Parser.parseFile(selectedFile);
-                } else {
-                    // Plain text: build flat terminal grammar
-                    List<Integer> seq = new ArrayList<>();
-                    for (char c : txt.toCharArray()) seq.add((int) c);
-                    Parser.ParsedGrammar pg = new Parser.ParsedGrammar(
-                        new HashMap<>(), seq, Collections.emptyMap());
-                    loadedGrammar = new Parser.ParsedGrammar(
-                        new HashMap<>(), seq,
-                        RuleMetadata.computeAll(pg, Collections.emptySet()));
-                }
-                cards.show(deck, "mode");
+                Parser.ParsedGrammar g = loadGrammarFromFile(selectedFile);
+                new RecompressionViewer(g, 0).setVisible(true);
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Load failed: " + ex.getMessage(),
                     "Error", JOptionPane.ERROR_MESSAGE);
             }
         });
+        bot.add(back);
         bot.add(Box.createHorizontalGlue());
-        bot.add(next);
+        bot.add(open);
         bot.add(Box.createHorizontalStrut(12));
         root.add(bot, BorderLayout.SOUTH);
         return root;
+    }
+
+    /** Parse a grammar or plain-text file into a ParsedGrammar. */
+    private Parser.ParsedGrammar loadGrammarFromFile(Path p) throws Exception {
+        String txt = Files.readString(p);
+        if (txt.startsWith("R") || txt.contains("\nSEQ:")) {
+            return Parser.parseFile(p);
+        }
+        List<Integer> seq = new ArrayList<>();
+        for (char c : txt.toCharArray()) seq.add((int) c);
+        Parser.ParsedGrammar pg = new Parser.ParsedGrammar(new HashMap<>(), seq, Collections.emptyMap());
+        return new Parser.ParsedGrammar(new HashMap<>(), seq,
+            RuleMetadata.computeAll(pg, Collections.emptySet()));
     }
 
     private class FileCell extends DefaultListCellRenderer {
@@ -244,29 +257,27 @@ public class GrammarApp extends JFrame {
     private JPanel buildModePicker() {
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(C_BG);
-        root.add(header("  Choose a mode"), BorderLayout.NORTH);
+        root.add(header("  RePair Grammar Lab   ·   Choose a mode"), BorderLayout.NORTH);
 
         JPanel cards2 = new JPanel(new GridLayout(1, 2, 24, 0));
         cards2.setBackground(C_BG);
         cards2.setBorder(new EmptyBorder(48, 64, 48, 64));
 
         JPanel animCard = modeCard("🎬", "Animation Mode", C_BLUE,
-            "Step through the recompression algorithm one\n"
-          + "operation at a time. Watch grammar rules update,\n"
-          + "bigram bars animate, and size converge live.\n\n"
+            "Select a grammar or text file, then step through\n"
+          + "the recompression algorithm one operation at a time.\n"
+          + "Watch rules update, bigram bars animate, and\n"
+          + "grammar size converge live.\n\n"
           + "Best for: understanding the algorithm, demos.");
         animCard.addMouseListener(new MouseAdapter() {
-            @Override public void mouseClicked(MouseEvent e) {
-                if (loadedGrammar != null)
-                    new RecompressionViewer(loadedGrammar, 0).setVisible(true);
-            }
+            @Override public void mouseClicked(MouseEvent e) { cards.show(deck, "file"); }
         });
 
         JPanel techCard = modeCard("🔬", "Technical Mode", C_ACCENT,
-            "Generate random text of length N, compress it,\n"
-          + "extract a sub-range, recompress the extract.\n"
-          + "Get an extensive report with 8 charts and a\n"
-          + "full pass-by-pass statistics table.\n\n"
+            "Generate random text (any length) or load an\n"
+          + "existing file, run a full compress → extract →\n"
+          + "recompress roundtrip, and get an extensive report\n"
+          + "with 8 charts and a pass-by-pass statistics table.\n\n"
           + "Best for: research, benchmarking, paper stats.");
         techCard.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) { cards.show(deck, "technical"); }
@@ -274,12 +285,7 @@ public class GrammarApp extends JFrame {
 
         cards2.add(animCard); cards2.add(techCard);
         root.add(cards2, BorderLayout.CENTER);
-
-        JPanel bot = navBar();
-        JButton back = plainBtn("◀  Back");
-        back.addActionListener(e -> cards.show(deck, "file"));
-        bot.add(back); bot.add(Box.createHorizontalGlue());
-        root.add(bot, BorderLayout.SOUTH);
+        // No bottom bar — this is the entry screen
         return root;
     }
 
@@ -324,38 +330,123 @@ public class GrammarApp extends JFrame {
     private JPanel buildTechnical() {
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(C_BG);
-        root.add(header("  Technical Mode  ·  Roundtrip Analysis"), BorderLayout.NORTH);
+        root.add(header("  Technical Mode   ·   Roundtrip Analysis"), BorderLayout.NORTH);
 
-        // Config form
+        // ── Source toggle ────────────────────────────────────────────────────
+        JToggleButton btnGenerate = new JToggleButton("⚡ Generate random text");
+        JToggleButton btnFile     = new JToggleButton("📄 Use existing file");
+        ButtonGroup   srcGroup    = new ButtonGroup();
+        srcGroup.add(btnGenerate); srcGroup.add(btnFile);
+        btnGenerate.setSelected(true);
+        styleToggle(btnGenerate, true);
+        styleToggle(btnFile, false);
+
+        JPanel toggleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 8));
+        toggleRow.setBackground(C_PANEL);
+        toggleRow.setBorder(new EmptyBorder(0, 20, 0, 0));
+        toggleRow.add(btnGenerate); toggleRow.add(Box.createHorizontalStrut(4)); toggleRow.add(btnFile);
+
+        // ── Source-specific area (CardLayout) ────────────────────────────────
+        CardLayout srcCards = new CardLayout();
+        JPanel     srcDeck  = new JPanel(srcCards);
+        srcDeck.setBackground(C_PANEL);
+
+        // Panel A — generate random text
+        JPanel genPanel = new JPanel();
+        genPanel.setLayout(new BoxLayout(genPanel, BoxLayout.Y_AXIS));
+        genPanel.setBackground(C_PANEL);
+        genPanel.setBorder(new EmptyBorder(4, 0, 4, 0));
+
+        tfLength   = new JTextField("500");
+        tfAlphabet = new JTextField("abcdefghijklmnopqrstuvwxyz");
+        styleField(tfLength); styleField(tfAlphabet);
+
+        genPanel.add(fRow("Text length N  (no upper limit):", tfLength));
+        genPanel.add(Box.createVerticalStrut(8));
+        genPanel.add(fRow("Alphabet:", tfAlphabet));
+        srcDeck.add(genPanel, "generate");
+
+        // Panel B — existing file list
+        DefaultListModel<Path> techFileModel = new DefaultListModel<>();
+        JList<Path> techFileList = new JList<>(techFileModel);
+        techFileList.setBackground(C_SURF); techFileList.setForeground(C_TEXT);
+        techFileList.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        techFileList.setSelectionBackground(C_BLUE); techFileList.setSelectionForeground(C_TEXT);
+        techFileList.setFixedCellHeight(36);
+        techFileList.setCellRenderer(new FileCell());
+        try {
+            Files.list(Path.of("."))
+                 .filter(p -> p.getFileName().toString().endsWith(".txt"))
+                 .sorted(Comparator.comparing(p -> p.getFileName().toString().toLowerCase()))
+                 .forEach(techFileModel::addElement);
+        } catch (IOException ignored) {}
+
+        techFileList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting() && techFileList.getSelectedValue() != null) {
+                techSelectedFile = techFileList.getSelectedValue();
+            }
+        });
+
+        JScrollPane fileScroll = new JScrollPane(techFileList);
+        fileScroll.setBorder(new EmptyBorder(4, 0, 0, 0));
+        fileScroll.setBackground(C_SURF); fileScroll.getViewport().setBackground(C_SURF);
+
+        JPanel filePanel = new JPanel(new BorderLayout());
+        filePanel.setBackground(C_PANEL);
+        filePanel.setBorder(new EmptyBorder(4, 0, 0, 0));
+        JLabel fileLbl = new JLabel("  Select a file — extract positions are relative to the decompressed text");
+        fileLbl.setFont(new Font("SansSerif", Font.ITALIC, 11)); fileLbl.setForeground(C_DIM);
+        filePanel.add(fileLbl, BorderLayout.NORTH);
+        filePanel.add(fileScroll, BorderLayout.CENTER);
+        srcDeck.add(filePanel, "file");
+
+        // Toggle handlers
+        btnGenerate.addActionListener(e -> {
+            useExistingFile = false;
+            styleToggle(btnGenerate, true); styleToggle(btnFile, false);
+            srcCards.show(srcDeck, "generate");
+        });
+        btnFile.addActionListener(e -> {
+            useExistingFile = true;
+            styleToggle(btnGenerate, false); styleToggle(btnFile, true);
+            srcCards.show(srcDeck, "file");
+        });
+
+        // ── Shared params ────────────────────────────────────────────────────
+        spPasses = spinner(0,  0, 10_000, 1);
+        spFrom   = spinner(20, 0, Integer.MAX_VALUE - 1, 1);
+        spTo     = spinner(80, 1, Integer.MAX_VALUE, 1);
+
+        JPanel sharedPanel = new JPanel();
+        sharedPanel.setLayout(new BoxLayout(sharedPanel, BoxLayout.Y_AXIS));
+        sharedPanel.setBackground(C_PANEL);
+        sharedPanel.setBorder(new EmptyBorder(8, 0, 4, 0));
+        sharedPanel.add(fRow("Max compression passes (0 = ∞):", spPasses));
+        sharedPanel.add(Box.createVerticalStrut(8));
+        sharedPanel.add(fRow("Extract start (inclusive):", spFrom));
+        sharedPanel.add(Box.createVerticalStrut(8));
+        sharedPanel.add(fRow("Extract end (exclusive):",   spTo));
+
+        // ── Assemble form ────────────────────────────────────────────────────
         JPanel form = new JPanel();
         form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
         form.setBackground(C_PANEL);
-        form.setBorder(new EmptyBorder(16, 28, 16, 28));
-
-        spN      = spinner(300,  10, 50_000, 50);
-        spPasses = spinner(0,     0,    500,  1);
-        spFrom   = spinner(20,    0, 49_999,  1);
-        spTo     = spinner(80,    1, 50_000,  1);
-        tfAlphabet = new JTextField("abcdefghijklmnopqrstuvwxyz");
-        styleField(tfAlphabet);
-
-        form.add(fRow("Text length N:",                 spN));
-        form.add(Box.createVerticalStrut(8));
-        form.add(fRow("Max compression passes (0=∞):", spPasses));
-        form.add(Box.createVerticalStrut(8));
-        form.add(fRow("Extract start (inclusive):",    spFrom));
-        form.add(Box.createVerticalStrut(8));
-        form.add(fRow("Extract end (exclusive):",      spTo));
-        form.add(Box.createVerticalStrut(8));
-        form.add(fRow("Alphabet:",                     tfAlphabet));
+        form.setBorder(new EmptyBorder(12, 28, 12, 28));
+        form.add(toggleRow);
+        form.add(Box.createVerticalStrut(10));
+        srcDeck.setMaximumSize(new Dimension(Integer.MAX_VALUE, 100));
+        srcDeck.setPreferredSize(new Dimension(Integer.MAX_VALUE, 88));
+        form.add(srcDeck);
+        form.add(Box.createVerticalStrut(10));
+        form.add(sharedPanel);
 
         JScrollPane formScroll = new JScrollPane(form);
         formScroll.setBackground(C_PANEL); formScroll.getViewport().setBackground(C_PANEL);
-        formScroll.setBorder(BorderFactory.createMatteBorder(0,0,1,0,C_BORDER));
-        formScroll.setMinimumSize(new Dimension(0, 190));
-        formScroll.setPreferredSize(new Dimension(Integer.MAX_VALUE, 210));
+        formScroll.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, C_BORDER));
+        formScroll.setMinimumSize(new Dimension(0, 200));
+        formScroll.setPreferredSize(new Dimension(Integer.MAX_VALUE, 280));
 
-        // Report holder
+        // ── Report holder ────────────────────────────────────────────────────
         reportHolder = new JPanel(new BorderLayout());
         reportHolder.setBackground(C_BG);
         JLabel hint = new JLabel("  Configure above and click  ▶ Run Analysis  to generate the report.");
@@ -364,7 +455,7 @@ public class GrammarApp extends JFrame {
         reportHolder.add(hint, BorderLayout.NORTH);
 
         techSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, formScroll, reportHolder);
-        techSplit.setDividerLocation(210); techSplit.setResizeWeight(0.0);
+        techSplit.setDividerLocation(280); techSplit.setResizeWeight(0.0);
         techSplit.setDividerSize(5); techSplit.setBorder(null);
         root.add(techSplit, BorderLayout.CENTER);
 
@@ -379,30 +470,76 @@ public class GrammarApp extends JFrame {
         return root;
     }
 
+    private void styleToggle(JToggleButton b, boolean active) {
+        b.setFont(new Font("SansSerif", Font.BOLD, 12));
+        b.setBackground(active ? C_ACCENT : C_SURF);
+        b.setForeground(active ? Color.WHITE : C_DIM);
+        b.setFocusPainted(false);
+        b.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(active ? C_ACCENT : C_BORDER, 1, true),
+            new EmptyBorder(5, 14, 5, 14)));
+        b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+    }
+
     private void runTechnical() {
-        int n       = (int) spN.getValue();
-        int passes  = (int) spPasses.getValue();
-        int from    = (int) spFrom.getValue();
-        int to      = (int) spTo.getValue();
+        int passes = (int) spPasses.getValue();
+        int from   = (int) spFrom.getValue();
+        int to     = (int) spTo.getValue();
+
+        // Validate source
+        if (useExistingFile) {
+            if (techSelectedFile == null) {
+                JOptionPane.showMessageDialog(this, "Select a file from the list.", "No file", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+        }
+
+        // Validate text length for generate mode
+        int n = 0;
         String alpha = tfAlphabet.getText().trim();
         if (alpha.isEmpty()) alpha = "abcdefghijklmnopqrstuvwxyz";
 
-        if (from >= to || to > n) {
-            JOptionPane.showMessageDialog(this, "Invalid range: need 0 ≤ from < to ≤ N.",
-                "Bad range", JOptionPane.WARNING_MESSAGE);
-            return;
+        if (!useExistingFile) {
+            try {
+                n = Integer.parseInt(tfLength.getText().trim());
+                if (n <= 0) throw new NumberFormatException();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(this, "Text length must be a positive integer.",
+                    "Bad length", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (from >= to || to > n) {
+                JOptionPane.showMessageDialog(this, "Invalid range: need 0 ≤ start < end ≤ N.",
+                    "Bad range", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
         }
 
-        JLabel spinner = new JLabel("  ⏳  Running analysis…");
-        spinner.setFont(new Font("SansSerif", Font.ITALIC, 13)); spinner.setForeground(C_SEL);
-        spinner.setBorder(new EmptyBorder(28, 28, 0, 0));
-        reportHolder.removeAll(); reportHolder.add(spinner, BorderLayout.NORTH);
+        JLabel busy = new JLabel("  ⏳  Running analysis…");
+        busy.setFont(new Font("SansSerif", Font.ITALIC, 13)); busy.setForeground(C_SEL);
+        busy.setBorder(new EmptyBorder(28, 28, 0, 0));
+        reportHolder.removeAll(); reportHolder.add(busy, BorderLayout.NORTH);
         reportHolder.revalidate(); reportHolder.repaint();
 
+        final int fn = n, fpasses = passes, ffrom = from, fto = to;
         final String fa = alpha;
+        final boolean fromFile = useExistingFile;
+        final Path fpath = techSelectedFile;
+
         SwingWorker<TechnicalReport, Void> w = new SwingWorker<>() {
-            @Override protected TechnicalReport doInBackground() {
-                return pipeline(n, passes, from, to, fa);
+            @Override protected TechnicalReport doInBackground() throws Exception {
+                if (fromFile) {
+                    Parser.ParsedGrammar g = loadGrammarFromFile(fpath);
+                    // Derive text length from the grammar
+                    String txt = Decompressor.decompress(g);
+                    int textLen = txt.length();
+                    int adjFrom = Math.min(ffrom, textLen - 1);
+                    int adjTo   = Math.min(fto,   textLen);
+                    if (adjFrom >= adjTo) adjTo = Math.min(adjFrom + 50, textLen);
+                    return pipelineFromGrammar(g, txt, fpasses, adjFrom, adjTo);
+                } else {
+                    return pipeline(fn, fpasses, ffrom, fto, fa);
+                }
             }
             @Override protected void done() {
                 try {
@@ -410,10 +547,11 @@ public class GrammarApp extends JFrame {
                     reportHolder.removeAll();
                     reportHolder.add(buildReport(r), BorderLayout.CENTER);
                     reportHolder.revalidate(); reportHolder.repaint();
-                    techSplit.setDividerLocation(210);
+                    techSplit.setDividerLocation(280);
                 } catch (Exception ex) {
+                    Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
                     reportHolder.removeAll();
-                    JLabel err = new JLabel("  Error: " + ex.getCause().getMessage());
+                    JLabel err = new JLabel("  Error: " + cause.getMessage());
                     err.setForeground(C_ACCENT); err.setBorder(new EmptyBorder(28, 28, 0, 0));
                     reportHolder.add(err, BorderLayout.NORTH);
                     reportHolder.revalidate(); reportHolder.repaint();
@@ -427,23 +565,21 @@ public class GrammarApp extends JFrame {
     //  Pipeline
     // ═════════════════════════════════════════════════════════════════════════
 
-    private TechnicalReport pipeline(int n, int maxPasses, int from, int to, String alpha) {
+    /** Pipeline for "use existing file" mode — grammar is pre-loaded, text is already decompressed. */
+    private TechnicalReport pipelineFromGrammar(Parser.ParsedGrammar orig, String inputText,
+                                                 int maxPasses, int from, int to) {
         long T0 = System.nanoTime();
+        // Delegate to the shared core, passing the grammar directly
+        return pipelineCore(orig, inputText, maxPasses, from, to);
+    }
 
-        // Generate random text
+    /** Pipeline for "generate random text" mode. */
+    private TechnicalReport pipeline(int n, int maxPasses, int from, int to, String alpha) {
         Random rnd = new Random(42);
         char[] buf = new char[n];
         for (int i = 0; i < n; i++) buf[i] = alpha.charAt(rnd.nextInt(alpha.length()));
         String input = new String(buf);
 
-        // Char frequencies + entropy
-        Map<Character, Integer> cf = new TreeMap<>();
-        for (char c : buf) cf.merge(c, 1, Integer::sum);
-        double entropy = cf.values().stream()
-            .mapToDouble(cnt -> { double p = (double)cnt/n; return -p * Math.log(p) / Math.log(2); })
-            .sum();
-
-        // Build flat grammar
         List<Integer> flatSeq = new ArrayList<>(n);
         for (char c : buf) flatSeq.add((int) c);
         Parser.ParsedGrammar orig = new Parser.ParsedGrammar(
@@ -451,6 +587,26 @@ public class GrammarApp extends JFrame {
             RuleMetadata.computeAll(
                 new Parser.ParsedGrammar(new HashMap<>(), flatSeq, Collections.emptyMap()),
                 Collections.emptySet()));
+
+        return pipelineCore(orig, input, maxPasses, from, to);
+    }
+
+    /**
+     * Shared compression/extraction/recompression core.
+     * inputText is the plain-text string the grammar represents (used for char stats only).
+     * from/to are positions in inputText (0-indexed, exclusive end).
+     */
+    private TechnicalReport pipelineCore(Parser.ParsedGrammar orig, String inputText,
+                                          int maxPasses, int from, int to) {
+        long T0 = System.nanoTime();
+        int n = inputText.length();
+
+        // Char frequencies + entropy
+        Map<Character, Integer> cf = new TreeMap<>();
+        for (char c : inputText.toCharArray()) cf.merge(c, 1, Integer::sum);
+        double entropy = cf.values().stream()
+            .mapToDouble(cnt -> { double p = (double)cnt/n; return -p * Math.log(p) / Math.log(2); })
+            .sum();
 
         // Initialize + compress
         Recompressor.InitializedGrammar init = Recompressor.initializeWithSentinelsAndRootRule(orig);
@@ -462,7 +618,6 @@ public class GrammarApp extends JFrame {
 
         int initSz = rules.values().stream().mapToInt(List::size).sum() + seq.size();
 
-        // Initial bigrams
         Map<Integer,RuleMetadata> m0 = meta(rules, seq, art);
         Map<Pair<Integer,Integer>,Integer> bigramsInit =
             Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(rules, seq, m0), art, false, null);
@@ -494,28 +649,28 @@ public class GrammarApp extends JFrame {
         long cT1 = System.nanoTime();
         int compSz = rules.values().stream().mapToInt(List::size).sum() + seq.size();
 
-        // Final bigrams
         Map<Pair<Integer,Integer>,Integer> bigFinal =
             Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(rules, seq, meta(rules,seq,art)), art, false, null);
 
-        // Build combined grammar for extraction
+        // Combined grammar for extraction
         Map<Integer,List<Integer>> comb = new LinkedHashMap<>(rules);
         comb.putAll(artR);
         Map<Integer,RuleMetadata> combMeta =
             RuleMetadata.computeAll(new Parser.ParsedGrammar(comb, seq, Collections.emptyMap()), new HashSet<>());
         Parser.ParsedGrammar compGram = new Parser.ParsedGrammar(comb, seq, combMeta);
 
-        // Adjust positions for leading '#' sentinel
-        int adjFrom = Math.min(from + 1, Extractor.getUncompressedSize(compGram) - 1);
-        int adjTo   = Math.min(to   + 1, Extractor.getUncompressedSize(compGram));
+        // Adjust extract positions for leading '#' sentinel
+        int fullSz  = Extractor.getUncompressedSize(compGram);
+        int adjFrom = Math.min(from + 1, fullSz - 1);
+        int adjTo   = Math.min(to   + 1, fullSz);
+        if (adjFrom >= adjTo) adjTo = Math.min(adjFrom + 50, fullSz);
 
-        // Extract
         Parser.ParsedGrammar exGram;
         try {
             exGram = Extractor.extractExcerpt(compGram, adjFrom, adjTo, false);
         } catch (Exception ex) {
-            // Fallback: build flat grammar from the decompressed slice
-            String slice = Decompressor.decompress(compGram).substring(adjFrom, adjTo);
+            String full = Decompressor.decompress(compGram);
+            String slice = full.substring(adjFrom, Math.min(adjTo, full.length()));
             List<Integer> sl = new ArrayList<>();
             for (char c : slice.toCharArray()) sl.add((int)c);
             exGram = new Parser.ParsedGrammar(new HashMap<>(), sl,
@@ -554,9 +709,9 @@ public class GrammarApp extends JFrame {
         }
         int recompFinal = r2.values().stream().mapToInt(List::size).sum() + s2.size();
 
+        String preview = inputText.length() > 300 ? inputText.substring(0, 300) + "…" : inputText;
         return new TechnicalReport(
-            input.length() > 300 ? input.substring(0, 300) + "…" : input, n,
-            cf, entropy, cf.size(),
+            preview, n, cf, entropy, cf.size(),
             compPasses, initSz, compSz, cT1-cT0,
             from, to, to-from, exInitSz,
             recompPasses, recompFinal,
@@ -899,7 +1054,10 @@ public class GrammarApp extends JFrame {
         };
     }
 
-    private String alpha(TechnicalReport r) { return tfAlphabet != null ? String.valueOf(tfAlphabet.getText().length()) : "?"; }
+    private String alpha(TechnicalReport r) {
+        if (useExistingFile) return "n/a (file source)";
+        return tfAlphabet != null ? String.valueOf(tfAlphabet.getText().length()) + " chars" : "?";
+    }
 
     private JPanel passTable(TechnicalReport r) {
         return new JPanel() {
