@@ -77,7 +77,14 @@ public class RuleMetadata {
         final int[] vocc  = new int[N];   // virtual occurrence count
         // isRule[id] replaces rules.containsKey(id) in all inner loops, avoiding HashMap boxing
         final boolean[] isRule = new boolean[N];
-        for (int id : rules.keySet()) isRule[id] = true;
+        // rhsArr[id] replaces rules.get(id) in all loops, avoiding HashMap lookup overhead
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] rhsArr = new List[N];
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            final int id = e.getKey();
+            isRule[id] = true;
+            rhsArr[id] = e.getValue();
+        }
 
         // Initialize terminals 0–255
         for (int t = 0; t < 256; t++) {
@@ -101,7 +108,9 @@ public class RuleMetadata {
         // ── Topological sort (Kahn's algorithm) ────────────────────────────
         // inDeg[v] = number of rules in `rules` that reference v in their RHS
         final int[] inDeg = new int[N];
-        for (List<Integer> rhs : rules.values()) {
+        for (int id = 256; id < N; id++) {
+            final List<Integer> rhs = rhsArr[id];
+            if (rhs == null) continue;
             for (int sym : rhs) {
                 if (sym < N && isRule[sym]) inDeg[sym]++;
             }
@@ -115,7 +124,7 @@ public class RuleMetadata {
         while (!queue.isEmpty()) {
             int u = queue.poll();
             order[cnt++] = u;
-            final List<Integer> rhs = rules.get(u);
+            final List<Integer> rhs = rhsArr[u];
             if (rhs == null) continue;
             for (int v : rhs) {
                 if (v < N && isRule[v] && --inDeg[v] == 0) queue.add(v);
@@ -128,7 +137,7 @@ public class RuleMetadata {
         // ── Bottom-up structural pass (reverse order = leaves first) ────────
         for (int i = cnt - 1; i >= 0; i--) {
             final int id = order[i];
-            final List<Integer> rhs = rules.get(id);
+            final List<Integer> rhs = rhsArr[id];
             if (rhs == null || rhs.isEmpty()) continue;
 
             // leftmost terminal: O(1) — first child's lTerm in a valid grammar
@@ -188,7 +197,7 @@ public class RuleMetadata {
             int u = order[i];
             int vU = vocc[u];
             if (vU == 0) continue;
-            final List<Integer> rhs = rules.get(u);
+            final List<Integer> rhs = rhsArr[u];
             if (rhs == null) continue;
             for (int v : rhs) {
                 if (v < N && isRule[v]) vocc[v] += vU;
