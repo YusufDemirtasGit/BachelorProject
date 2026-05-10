@@ -32,277 +32,177 @@ public class RuleMetadata {
     public int getLeftRunLength() { return leftRunLength; }
     public int getRightRunLength() { return rightRunLength; }
 
-    /**
-     * Compute metadata for all rules in the grammar.
-     */
-    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar, Set<Integer> artificialTerminals) {
-        Map<Integer, List<Integer>> rules = grammar.grammarRules();
-        List<Integer> sequence = grammar.sequence();
-        Map<Integer, RuleMetadata> meta = new HashMap<>();
-
-        // Compute vocc for all rules
-        Map<Integer, Integer> allVocc = computeVocc(rules, sequence);
-
-        // Memoization maps
-        Map<Integer, Integer> lenMemo = new HashMap<>();
-        Map<Integer, Integer> leftTermMemo = new HashMap<>();
-        Map<Integer, Integer> rightTermMemo = new HashMap<>();
-        Map<Integer, Integer> sbMemo = new HashMap<>();
-        Map<Integer, Integer> leftRunMemo = new HashMap<>();
-        Map<Integer, Integer> rightRunMemo = new HashMap<>();
-
-        // Precompute lengths for all rules
-        for (int ruleId : rules.keySet()) {
-            computeLength(ruleId, rules, lenMemo, new HashSet<>(),artificialTerminals);
-        }
-
-        // Compute all metadata for each rule
-        for (int ruleId : rules.keySet()) {
-            int vocc = allVocc.getOrDefault(ruleId, 0);
-            int length = lenMemo.getOrDefault(ruleId, 0);
-            int leftTerm = computeFirstTerminal(ruleId, rules, leftTermMemo, artificialTerminals);
-            int rightTerm = computeLastTerminal(ruleId, rules, rightTermMemo, artificialTerminals);
-            boolean isSB = isSingleBlock(ruleId, rules, sbMemo, leftTermMemo, rightTermMemo, artificialTerminals);
-            int leftRun = computeLeftRun(ruleId, rules, leftRunMemo, leftTermMemo, lenMemo, artificialTerminals, new HashSet<>());
-            int rightRun = computeRightRun(ruleId, rules, rightRunMemo, rightTermMemo, lenMemo, artificialTerminals, new HashSet<>());
-
-            meta.put(ruleId, new RuleMetadata(vocc, length, leftTerm, rightTerm, isSB, leftRun, rightRun));
-        }
-
-        return meta;
+    public static Map<Integer, RuleMetadata> computeAll(
+            Map<Integer, List<Integer>> rules,
+            List<Integer> sequence,
+            Set<Integer> artificialTerminals) {
+        return computeAllImpl(rules, sequence, artificialTerminals);
     }
-    // Topological sort (Kahn's algorithm) ensures parent counts are finalized before propagating to children.
-    private static Map<Integer, Integer> computeVocc(Map<Integer, List<Integer>> rules, List<Integer> sequence) {
-        // Pre-size to avoid rehashing; rules.containsKey replaces a separate inDegree.containsKey.
-        int cap = (int)(rules.size() * 1.5) + 1;
-        Map<Integer, Integer> vocc = new HashMap<>(cap);
-        Map<Integer, Integer> inDegree = new HashMap<>(cap);
-        List<Integer> processingOrder = new ArrayList<>(rules.size());
-        Queue<Integer> queue = new LinkedList<>();
 
-        //Initialize in-degree and vocc maps for all non-terminals.
-        for (int ruleId : rules.keySet()) {
-            inDegree.put(ruleId, 0);
-            vocc.put(ruleId, 0);
+    public static Map<Integer, RuleMetadata> computeAll(Parser.ParsedGrammar grammar, Set<Integer> artificialTerminals) {
+        return computeAllImpl(grammar.grammarRules(), grammar.sequence(), artificialTerminals);
+    }
+
+    /**
+     * Computes all metadata for every rule in one shared topological sort + two linear passes:
+     *   1. Bottom-up (leaves first): len, leftTerm, rightTerm, isSB, leftRun, rightRun
+     *   2. Top-down  (roots  first): vocc
+     *
+     * Uses primitive int[] arrays indexed by rule ID to eliminate HashMap boxing overhead.
+     */
+    private static Map<Integer, RuleMetadata> computeAllImpl(
+            Map<Integer, List<Integer>> rules,
+            List<Integer> sequence,
+            Set<Integer> artificialTerminals) {
+
+        if (rules.isEmpty()) {
+            return new HashMap<>();
         }
 
-        //Calculate the in-degree for each rule, which is the number of times it's used by other rules.
-        for (List<Integer> rhs : rules.values()) {
-            for (int symbol : rhs) {
-                if (rules.containsKey(symbol)) { // inDegree is keyed exactly by rules.keySet()
-                    inDegree.put(symbol, inDegree.get(symbol) + 1);
+        // ── Determine array size ────────────────────────────────────────────
+        int maxId = 255;
+        for (int id : rules.keySet()) if (id > maxId) maxId = id;
+        if (artificialTerminals != null) {
+            for (int id : artificialTerminals) if (id > maxId) maxId = id;
+        }
+        final int N = maxId + 1;
+
+        // ── Allocate primitive arrays (indexed by symbol id 0..N-1) ────────
+        final int[] len   = new int[N];   // expansion length
+        final int[] lTerm = new int[N];   // leftmost terminal (-1 = none)
+        final int[] rTerm = new int[N];   // rightmost terminal (-1 = none)
+        final int[] sb    = new int[N];   // isSingleBlock: 1=true, 0=false
+        final int[] lRun  = new int[N];   // left run length
+        final int[] rRun  = new int[N];   // right run length
+        final int[] vocc  = new int[N];   // virtual occurrence count
+
+        // Initialize terminals 0–255
+        for (int t = 0; t < 256; t++) {
+            len[t] = 1; lTerm[t] = t; rTerm[t] = t; sb[t] = 1; lRun[t] = 1; rRun[t] = 1;
+        }
+        // Default rule-range lTerm/rTerm to -1 (will be filled bottom-up)
+        Arrays.fill(lTerm, 256, N, -1);
+        Arrays.fill(rTerm, 256, N, -1);
+
+        // Initialize artificial terminals (opaque leaf symbols)
+        if (artificialTerminals != null) {
+            for (int id : artificialTerminals) {
+                if (id < N) {
+                    len[id] = 1; lTerm[id] = id; rTerm[id] = id;
+                    sb[id] = 1; lRun[id] = 1; rRun[id] = 1;
                 }
             }
         }
 
-        //Initialize the queue for topological sort with rules that have an in-degree of 0.
-        // These are the "top-level" rules not used by any other rules.
-        for (Map.Entry<Integer, Integer> entry : inDegree.entrySet()) {
-            if (entry.getValue() == 0) {
-                queue.add(entry.getKey());
+        // ── Topological sort (Kahn's algorithm) ────────────────────────────
+        // inDeg[v] = number of rules in `rules` that reference v in their RHS
+        final int[] inDeg = new int[N];
+        for (List<Integer> rhs : rules.values()) {
+            for (int sym : rhs) {
+                if (sym < N && rules.containsKey(sym)) inDeg[sym]++;
             }
         }
-
-        //Build the topological processing order using Kahn's algorithm.
+        final Deque<Integer> queue = new ArrayDeque<>();
+        for (int id : rules.keySet()) {
+            if (inDeg[id] == 0) queue.add(id);
+        }
+        final int[] order = new int[rules.size()]; // top-down (roots first)
+        int cnt = 0;
         while (!queue.isEmpty()) {
             int u = queue.poll();
-            processingOrder.add(u);
+            order[cnt++] = u;
+            final List<Integer> rhs = rules.get(u);
+            if (rhs == null) continue;
+            for (int v : rhs) {
+                if (v < N && rules.containsKey(v) && --inDeg[v] == 0) queue.add(v);
+            }
+        }
+        if (cnt != rules.size()) {
+            System.err.println("Warning: Cycle detected in grammar rules. Metadata may be incomplete.");
+        }
 
-            // For each rule used by u, decrement its in-degree.
-            for (int v : rules.get(u)) {
-                if (rules.containsKey(v)) { // inDegree is keyed exactly by rules.keySet()
-                    int newDegree = inDegree.get(v) - 1;
-                    inDegree.put(v, newDegree);
-                    if (newDegree == 0) {
-                        queue.add(v);
-                    }
+        // ── Bottom-up structural pass (reverse order = leaves first) ────────
+        for (int i = cnt - 1; i >= 0; i--) {
+            final int id = order[i];
+            final List<Integer> rhs = rules.get(id);
+            if (rhs == null || rhs.isEmpty()) continue;
+
+            // expansion length
+            int tLen = 0;
+            for (int sym : rhs) tLen += len[sym];
+            len[id] = tLen;
+
+            // leftmost terminal (first child with lTerm != -1)
+            int lT = -1;
+            for (int sym : rhs) { int v = lTerm[sym]; if (v != -1) { lT = v; break; } }
+            lTerm[id] = lT;
+
+            // rightmost terminal (last child with rTerm != -1)
+            int rT = -1;
+            for (int j = rhs.size() - 1; j >= 0; j--) { int v = rTerm[rhs.get(j)]; if (v != -1) { rT = v; break; } }
+            rTerm[id] = rT;
+
+            // isSingleBlock: leftTerm == rightTerm AND every child is a single block of the same terminal
+            boolean single = (lT != -1) && (lT == rT);
+            if (single) {
+                for (int sym : rhs) {
+                    if (sb[sym] == 0 || lTerm[sym] != lT) { single = false; break; }
                 }
             }
-        }
+            sb[id] = single ? 1 : 0;
 
-        // A cycle is present if not all rules are in the processing order.
-        if (processingOrder.size() != rules.size()) {
-            System.err.println("Warning: Cycle detected in grammar rules. Vocc calculation may be incomplete for rules in a cycle.");
-        }
-
-        //Initialize vocc with direct occurrences in the main sequence.
-        for (int symbol : sequence) {
-            if (rules.containsKey(symbol)) {
-                vocc.put(symbol, vocc.get(symbol) + 1);
-            }
-        }
-
-        //Propagate counts through the grammar according to the topological order.
-        for (int u : processingOrder) {
-            int voccOfU = vocc.get(u);
-            if (voccOfU == 0) {
-                continue; // This rule never occurs, so it can't contribute to others.
-            }
-
-            // Add this rule's vocc to the vocc of each non-terminal it uses.
-            for (int v : rules.get(u)) {
-                if (rules.containsKey(v)) {
-                    vocc.put(v, vocc.get(v) + voccOfU);
+            // leftRun: walk RHS left-to-right while child's leftTerm matches; stop when a child's run < its length
+            if (lT == -1) {
+                lRun[id] = 0;
+            } else {
+                int run = 0;
+                for (int sym : rhs) {
+                    if (lTerm[sym] != lT) break;
+                    int symLR = lRun[sym];
+                    run += symLR;
+                    if (symLR < len[sym]) break;
                 }
+                lRun[id] = run;
+            }
+
+            // rightRun: symmetric, walk right-to-left
+            if (rT == -1) {
+                rRun[id] = 0;
+            } else {
+                int run = 0;
+                for (int j = rhs.size() - 1; j >= 0; j--) {
+                    int sym = rhs.get(j);
+                    if (rTerm[sym] != rT) break;
+                    int symRR = rRun[sym];
+                    run += symRR;
+                    if (symRR < len[sym]) break;
+                }
+                rRun[id] = run;
             }
         }
 
-        return vocc;
-    }
-
-
-
-    private static boolean isTerminalOrArtificial(int sym, Set<Integer> artificialTerminals) {
-        return sym < 256 || (artificialTerminals != null && artificialTerminals.contains(sym));
-    }
-
-    private static int computeLength(int id, Map<Integer, List<Integer>> rules,
-                                     Map<Integer, Integer> memo, Set<Integer> visited,Set<Integer> artificialTerminals) {
-        if (isTerminalOrArtificial(id,artificialTerminals ) ) return 1;
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) return 0;
-        if (!visited.add(id)) return 0; // cycle guard
-
-        int len = 0;
-        for (int sym : rules.get(id)) len += computeLength(sym, rules, memo, visited,artificialTerminals);
-        visited.remove(id);
-        memo.put(id, len);
-        return len;
-    }
-
-    private static int computeFirstTerminal(int id, Map<Integer, List<Integer>> rules,
-                                            Map<Integer, Integer> memo, Set<Integer> artificialTerminals) {
-        if (isTerminalOrArtificial(id, artificialTerminals)) return id;
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) return -1;
-        for (int sym : rules.get(id)) {
-            int first = computeFirstTerminal(sym, rules, memo, artificialTerminals);
-            if (first != -1) {
-                memo.put(id, first);
-                return first;
+        // ── Vocc: seed from sequence, propagate top-down ────────────────────
+        for (int sym : sequence) {
+            if (sym < N && rules.containsKey(sym)) vocc[sym]++;
+        }
+        for (int i = 0; i < cnt; i++) {
+            int u = order[i];
+            int vU = vocc[u];
+            if (vU == 0) continue;
+            final List<Integer> rhs = rules.get(u);
+            if (rhs == null) continue;
+            for (int v : rhs) {
+                if (v < N && rules.containsKey(v)) vocc[v] += vU;
             }
         }
-        memo.put(id, -1);
-        return -1;
-    }
 
-    private static int computeLastTerminal(int id, Map<Integer, List<Integer>> rules,
-                                           Map<Integer, Integer> memo, Set<Integer> artificialTerminals) {
-        if (isTerminalOrArtificial(id, artificialTerminals)) return id;
-        if (memo.containsKey(id)) return memo.get(id);
-        if (!rules.containsKey(id)) return -1;
-        List<Integer> rhs = rules.get(id);
-        for (int i = rhs.size() - 1; i >= 0; i--) {
-            int last = computeLastTerminal(rhs.get(i), rules, memo, artificialTerminals);
-            if (last != -1) {
-                memo.put(id, last);
-                return last;
-            }
+        // ── Build result map ─────────────────────────────────────────────────
+        final Map<Integer, RuleMetadata> meta = new HashMap<>((int)(rules.size() * 1.4) + 1);
+        for (int id : rules.keySet()) {
+            meta.put(id, new RuleMetadata(vocc[id], len[id], lTerm[id], rTerm[id],
+                                          sb[id] == 1, lRun[id], rRun[id]));
         }
-        memo.put(id, -1);
-        return -1;
-    }
-
-    private static boolean isSingleBlock(int id, Map<Integer, List<Integer>> rules, Map<Integer, Integer> memoSB,
-                                         Map<Integer, Integer> memoLeft, Map<Integer, Integer> memoRight,
-                                         Set<Integer> artificialTerminals) {
-        if (id < 256 || artificialTerminals.contains(id)) return true;
-        if (memoSB.containsKey(id)) return memoSB.get(id) == 1;
-        if (!rules.containsKey(id)) return false;
-        int leftTerm = computeFirstTerminal(id, rules, memoLeft, artificialTerminals);
-        int rightTerm = computeLastTerminal(id, rules, memoRight, artificialTerminals);
-        if (leftTerm == -1 || leftTerm != rightTerm) {
-            memoSB.put(id, 0);
-            return false;
-        }
-        for (int sym : rules.get(id)) {
-            if (!isSingleBlock(sym, rules, memoSB, memoLeft, memoRight, artificialTerminals)) {
-                memoSB.put(id, 0);
-                return false;
-            }
-            if (computeFirstTerminal(sym, rules, memoLeft, artificialTerminals) != leftTerm) {
-                memoSB.put(id, 0);
-                return false;
-            }
-        }
-        memoSB.put(id, 1);
-        return true;
-    }
-
-    private static int computeLeftRun(
-            int id,
-            Map<Integer, List<Integer>> rules,
-            Map<Integer, Integer> memoLeftRun,
-            Map<Integer, Integer> memoFirstTerminal,
-            Map<Integer, Integer> memoLength,
-            Set<Integer> artificialTerminals,
-            Set<Integer> visited
-    ) {
-        if (isTerminalOrArtificial(id, artificialTerminals)) return 1;
-        if (memoLeftRun.containsKey(id)) return memoLeftRun.get(id);
-        if (!rules.containsKey(id)) return 0;
-        if (!visited.add(id)) return 0; // cycle guard
-
-        int base = computeFirstTerminal(id, rules, memoFirstTerminal, artificialTerminals);
-        if (base == -1) {
-            memoLeftRun.put(id, 0);
-            visited.remove(id);
-            return 0;
-        }
-
-        int run = 0;
-        for (int sym : rules.get(id)) {
-            if (computeFirstTerminal(sym, rules, memoFirstTerminal, artificialTerminals) != base) break;
-
-            int subRun = computeLeftRun(sym, rules, memoLeftRun, memoFirstTerminal, memoLength, artificialTerminals, visited);
-            int symLen = memoLength.getOrDefault(sym, 1);
-
-            run += subRun;
-            if (subRun < symLen) break;
-        }
-
-        visited.remove(id);
-        memoLeftRun.put(id, run);
-        return run;
-    }
-
-    private static int computeRightRun(
-            int id,
-            Map<Integer, List<Integer>> rules,
-            Map<Integer, Integer> memoRightRun,
-            Map<Integer, Integer> memoLastTerminal,
-            Map<Integer, Integer> memoLength,
-            Set<Integer> artificialTerminals,
-            Set<Integer> visited
-    ) {
-        if (isTerminalOrArtificial(id, artificialTerminals)) return 1;
-        if (memoRightRun.containsKey(id)) return memoRightRun.get(id);
-        if (!rules.containsKey(id)) return 0;
-        if (!visited.add(id)) return 0; // cycle guard
-
-        int base = computeLastTerminal(id, rules, memoLastTerminal, artificialTerminals);
-        if (base == -1) {
-            memoRightRun.put(id, 0);
-            visited.remove(id);
-            return 0;
-        }
-
-        int run = 0;
-        List<Integer> rhs = rules.get(id);
-        for (int i = rhs.size() - 1; i >= 0; i--) {
-            int sym = rhs.get(i);
-            if (computeLastTerminal(sym, rules, memoLastTerminal, artificialTerminals) != base) break;
-
-            int subRun = computeRightRun(sym, rules, memoRightRun, memoLastTerminal, memoLength, artificialTerminals, visited);
-            int symLen = memoLength.getOrDefault(sym, 1);
-
-            run += subRun;
-            if (subRun < symLen) break;
-        }
-
-        visited.remove(id);
-        memoRightRun.put(id, run);
-        return run;
+        return meta;
     }
 
     /**
@@ -332,6 +232,7 @@ public class RuleMetadata {
         }
         System.out.println("========================\n");
     }
+
     public static String metadataToString(Map<Integer, RuleMetadata> metadata) {
         if (metadata == null || metadata.isEmpty()) {
             return "No metadata available.\n";
@@ -357,5 +258,4 @@ public class RuleMetadata {
         sb.append("========================\n\n");
         return sb.toString();
     }
-
 }
