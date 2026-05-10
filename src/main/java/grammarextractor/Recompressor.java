@@ -4,7 +4,6 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -75,12 +74,12 @@ public class Recompressor {
                 log.accept(1, "Grammar size = " + startsize);
             }
 
-            Map<Integer, List<Integer>> rules = new LinkedHashMap<>(initialized.grammarRules());
+            Map<Integer, List<Integer>> rules = new HashMap<>(initialized.grammarRules());
             List<Integer> sequence = new ArrayList<>(initialized.sequence());
 
-            int initialMaxId = rules.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
-            AtomicInteger nextRuleId = new AtomicInteger(initialMaxId);
-            log.accept(2, " Initial nextRuleId = " + initialMaxId);
+            int nextRuleId = 256;
+            for (int id : rules.keySet()) if (id >= nextRuleId) nextRuleId = id + 1;
+            log.accept(2, " Initial nextRuleId = " + nextRuleId);
 
             log.accept(3, " Computing initial metadata...");
             Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
@@ -115,7 +114,7 @@ public class Recompressor {
                 // --- bigram frequencies ---
                 log.accept(3, " Computing bigram frequencies...");
                 long freqStartNs = System.nanoTime();
-                Map<Pair<Integer, Integer>, Integer> frequencies =
+                Map<Pair, Integer> frequencies =
                         computeBigramFrequencies(
                                 workingGrammar,
                                 artificialTerminals,
@@ -132,7 +131,7 @@ public class Recompressor {
 
                 // --- select most frequent bigram ---
                 long pickStartNs = System.nanoTime();
-                Pair<Integer, Integer> bigram = getMostFrequentBigram(frequencies, artificialTerminals);
+                Pair bigram = getMostFrequentBigram(frequencies, artificialTerminals);
                 long pickEndNs = System.nanoTime();
                 log.accept(2, "Time to pick most frequent bigram: " +(double) (pickEndNs - pickStartNs) / 1_000_000 + "ms");
 
@@ -144,7 +143,7 @@ public class Recompressor {
                 int c1 = bigram.first;
                 int c2 = bigram.second;
 
-                int newRuleId = nextRuleId.getAndIncrement();
+                int newRuleId = nextRuleId++;
 
                 // --- uncross ---
                 long uncrossStartNs = System.nanoTime();
@@ -161,15 +160,9 @@ public class Recompressor {
                 artificialRules.put(newRuleId, List.of(c1, c2));
                 artificialTerminals.add(newRuleId);
 
-                // --- prune redundant rules ---
-                long pruneStartNs = System.nanoTime();
-                removeRedundantRules(rules, sequence);
-                long pruneEndNs = System.nanoTime();
-                log.accept(2, "Time for removing redundant rules: " +(double) (pruneEndNs - pruneStartNs) / 1_000_000 + "ms");
-
-                // --- per-pass total (before roundtrip to isolate transform time) ---
+                // --- per-pass total ---
                 long preRoundtripEndNs = System.nanoTime();
-                log.accept(2, "Time for pass core (metadata->prune): " +(double) (preRoundtripEndNs - metaStartNs) / 1_000_000 + "ms");
+                log.accept(2, "Time for pass core (metadata->replace): " +(double) (preRoundtripEndNs - metaStartNs) / 1_000_000 + "ms");
 
                 // --- roundtrip check (timed) ---
                 if (roundtrip) {
@@ -397,12 +390,12 @@ public class Recompressor {
 //    /**
 //     * Computes frequencies of non-repeating bigrams (c1 != c2) for the grammar.
 //     */
-//    public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(
+//    public static Map<Pair, Integer> computeNonRepeatingFrequencies(
 //            Parser.ParsedGrammar grammar,
 //            Set<Integer> artificialTerminals,
 //            boolean verbose
 //    ) {
-//        Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
+//        Map<Pair, Integer> bigramFreqs = new HashMap<>();
 //        Map<Integer, List<Integer>> rules = grammar.grammarRules();
 //        Map<Integer, RuleMetadata> metadata = grammar.metadata();
 //
@@ -426,7 +419,7 @@ public class Recompressor {
 //                int c1 = context.get(i);
 //                int c2 = context.get(i + 1);
 //                if (c1 != c2) {
-//                    bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
+//                    bigramFreqs.merge(new Pair(c1, c2), vocc, Integer::sum);
 //                    if(verbose)System.out.println("added non-repeating block " + c1 + c2 + " " + vocc + " times");
 //                }
 //            }
@@ -444,12 +437,12 @@ public class Recompressor {
 //     * - Prefix/suffix blocks of val(X) are ignored if they belong to child variables
 //     *   that are single-block nonterminals (All required info is pulled from the metadata).
 //     */
-//    public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
+//    public static Map<Pair, Integer> computeRepeatingFrequencies(
 //            Parser.ParsedGrammar grammar,
 //            Set<Integer> artificialTerminals,
 //            boolean verbose
 //    ) {
-//        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
+//        Map<Pair, Integer> freqMap = new HashMap<>();
 //        Map<Integer, List<Integer>> rules = grammar.grammarRules();
 //        Map<Integer, RuleMetadata> metadata = grammar.metadata();
 //
@@ -488,7 +481,7 @@ public class Recompressor {
 //                    boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
 //
 //                    if (!isPrefixRun && !isSuffixRun) {
-//                        freqMap.merge(Pair.of(c, c), (d / 2) * vocc, Integer::sum);
+//                        freqMap.merge(new Pair(c, c), (d / 2) * vocc, Integer::sum);
 //                        if(verbose)System.out.println("added repeating block " + c + " " + (d / 2) * vocc + " times");
 //                    }
 //                }
@@ -501,13 +494,13 @@ public class Recompressor {
     /**
      * Computes frequencies of non-repeating bigrams (c1 != c2) for the grammar.
      */
-    public static Map<Pair<Integer, Integer>, Integer> computeNonRepeatingFrequencies(
+    public static Map<Pair, Integer> computeNonRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
             boolean verbose,
             Consumer<String> log
     ) {
-        Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
+        Map<Pair, Integer> bigramFreqs = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
 
@@ -534,7 +527,7 @@ public class Recompressor {
                 int c1 = context.get(i);
                 int c2 = context.get(i + 1);
                 if (c1 != c2) {
-                    bigramFreqs.merge(Pair.of(c1, c2), vocc, Integer::sum);
+                    bigramFreqs.merge(new Pair(c1, c2), vocc, Integer::sum);
                     if (verbose || log != null) {
                         log.accept("added non-repeating pair (" + c1 + "," + c2 + ") " + vocc + " times");
                     }
@@ -554,13 +547,13 @@ public class Recompressor {
      * - Prefix/suffix blocks of val(X) are ignored if they belong to child variables
      *   that are single-block nonterminals (All required info is pulled from the metadata).
      */
-    public static Map<Pair<Integer, Integer>, Integer> computeRepeatingFrequencies(
+    public static Map<Pair, Integer> computeRepeatingFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
             boolean verbose,
             Consumer<String> log
     ) {
-        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
+        Map<Pair, Integer> freqMap = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
 
@@ -603,7 +596,7 @@ public class Recompressor {
                     if (!isPrefixRun && !isSuffixRun) {
                         int add = (d / 2) * vocc;
                         if (add > 0) {
-                            freqMap.merge(Pair.of(c, c), add, Integer::sum);
+                            freqMap.merge(new Pair(c, c), add, Integer::sum);
                             if (verbose || log != null) {
                                 log.accept("added repeating pair (" + c + "," + c + ") " + add + " times"
                                         + " [run length=" + d + ", vocc=" + vocc + "]");
@@ -641,16 +634,16 @@ public class Recompressor {
     /**
      * Merges non-repeating and repeating frequencies into one map. Not necessarily optimal, since all can be calculated in one single pass. I did it this way since it's easier to read.
      */
-//    public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
+//    public static Map<Pair, Integer> computeBigramFrequencies(
 //            Parser.ParsedGrammar grammar,
 //            Set<Integer> artificialTerminals,
 //            boolean verbose
 //    ) {
-//        Map<Pair<Integer, Integer>, Integer> nonRep = computeNonRepeatingFrequencies(grammar, artificialTerminals,verbose);
-//        Map<Pair<Integer, Integer>, Integer> rep = computeRepeatingFrequencies(grammar, artificialTerminals,verbose);
+//        Map<Pair, Integer> nonRep = computeNonRepeatingFrequencies(grammar, artificialTerminals,verbose);
+//        Map<Pair, Integer> rep = computeRepeatingFrequencies(grammar, artificialTerminals,verbose);
 //
-//        Map<Pair<Integer, Integer>, Integer> merged = new HashMap<>(nonRep);
-//        for (Map.Entry<Pair<Integer, Integer>, Integer> e : rep.entrySet()) {
+//        Map<Pair, Integer> merged = new HashMap<>(nonRep);
+//        for (Map.Entry<Pair, Integer> e : rep.entrySet()) {
 //            merged.merge(e.getKey(), e.getValue(), Integer::sum);
 //        }
 //        return merged;
@@ -660,15 +653,16 @@ public class Recompressor {
      * Single-pass combined computation of non-repeating and repeating bigram frequencies.
      * Replaces two separate iterations over all rules with one, halving the number of buildContext calls.
      */
-    public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequenciesCombined(
+    public static Map<Pair, Integer> computeBigramFrequenciesCombined(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
             boolean verbose,
             Consumer<String> log
     ) {
-        Map<Pair<Integer, Integer>, Integer> freqMap = new HashMap<>();
         Map<Integer, List<Integer>> rules = grammar.grammarRules();
         Map<Integer, RuleMetadata> metadata = grammar.metadata();
+        Map<Pair, Integer> freqMap = new HashMap<>(rules.size());
+        int[] ctx = new int[256];
 
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             int ruleId = entry.getKey();
@@ -681,9 +675,52 @@ public class Recompressor {
             List<Integer> rhs = entry.getValue();
             if (rhs == null || rhs.isEmpty()) continue;
 
-            List<Integer> context = buildContext(rhs, metadata, artificialTerminals);
+            // Build context inline into primitive array (avoids ArrayList + Integer autoboxing)
+            int ctxLen = 0;
+
+            int firstElement = rhs.getFirst();
+            if (firstElement < 256 || artificialTerminals.contains(firstElement)) {
+                if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+                ctx[ctxLen++] = firstElement;
+            } else {
+                RuleMetadata firstMeta = metadata.get(firstElement);
+                if (firstMeta != null) {
+                    int rt = firstMeta.getRightmostTerminal();
+                    int rr = firstMeta.getRightRunLength();
+                    if (ctxLen + rr > ctx.length) ctx = growBuf(ctx, ctxLen + rr);
+                    for (int k = 0; k < rr; k++) ctx[ctxLen++] = rt;
+                }
+            }
+
+            int midEnd = rhs.size() - 1;
+            for (int mi = 1; mi < midEnd; mi++) {
+                if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+                ctx[ctxLen++] = rhs.get(mi);
+            }
+
+            if (rhs.size() > 1) {
+                int lastElement = rhs.get(rhs.size() - 1);
+                if (lastElement < 256 || artificialTerminals.contains(lastElement)) {
+                    if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+                    ctx[ctxLen++] = lastElement;
+                } else {
+                    RuleMetadata lastMeta = metadata.get(lastElement);
+                    if (lastMeta != null) {
+                        int lt = lastMeta.getLeftmostTerminal();
+                        int lr = lastMeta.getLeftRunLength();
+                        if (ctxLen + lr > ctx.length) ctx = growBuf(ctx, ctxLen + lr);
+                        for (int k = 0; k < lr; k++) ctx[ctxLen++] = lt;
+                    }
+                }
+            }
+
             if (verbose && log != null) {
-                log.accept("context for rule " + ruleId + ": " + context);
+                StringBuilder sb = new StringBuilder("context for rule ").append(ruleId).append(": [");
+                for (int ci = 0; ci < ctxLen; ci++) {
+                    if (ci > 0) sb.append(", ");
+                    sb.append(ctx[ci]);
+                }
+                log.accept(sb.append(']').toString());
             }
 
             int X1 = rhs.get(0);
@@ -692,44 +729,40 @@ public class Recompressor {
             boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
 
             int i = 0;
-            while (i < context.size()) {
-                int c = context.get(i);
-                // Find run end
+            while (i < ctxLen) {
+                int c = ctx[i];
                 int j = i + 1;
-                while (j < context.size() && context.get(j) == c) j++;
+                while (j < ctxLen && ctx[j] == c) j++;
                 int d = j - i;
 
                 if (d == 1) {
-                    // Non-repeating: count (c, next) if next differs
-                    if (j < context.size()) {
-                        int c2 = context.get(j);
+                    if (j < ctxLen) {
+                        int c2 = ctx[j];
                         if (c2 != c) {
-                            freqMap.merge(Pair.of(c, c2), vocc, Integer::sum);
+                            freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
                             if (verbose && log != null) {
                                 log.accept("added non-repeating pair (" + c + "," + c2 + ") " + vocc + " times");
                             }
                         }
                     }
                 } else {
-                    // Run of length >= 2: repeating bigram (c,c)
                     boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
-                    boolean isSuffixRun = (j == context.size() && rightIsTerminalOrSingleBlock);
+                    boolean isSuffixRun = (j == ctxLen && rightIsTerminalOrSingleBlock);
 
                     if (!isPrefixRun && !isSuffixRun) {
                         int add = (d / 2) * vocc;
                         if (add > 0) {
-                            freqMap.merge(Pair.of(c, c), add, Integer::sum);
+                            freqMap.merge(new Pair(c, c), add, Integer::sum);
                             if (verbose && log != null) {
                                 log.accept("added repeating pair (" + c + "," + c + ") " + add + " times");
                             }
                         }
                     }
 
-                    // Also count the transition from last c in this run to the next different symbol
-                    if (j < context.size()) {
-                        int c2 = context.get(j);
+                    if (j < ctxLen) {
+                        int c2 = ctx[j];
                         if (c2 != c) {
-                            freqMap.merge(Pair.of(c, c2), vocc, Integer::sum);
+                            freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
                             if (verbose && log != null) {
                                 log.accept("added non-repeating pair (" + c + "," + c2 + ") " + vocc + " times");
                             }
@@ -742,7 +775,18 @@ public class Recompressor {
         return freqMap;
     }
 
-    public static Map<Pair<Integer, Integer>, Integer> computeBigramFrequencies(
+    private static int[] growBuf(int[] buf, int needed) {
+        return java.util.Arrays.copyOf(buf, Math.max(buf.length * 2, needed));
+    }
+
+    public static Map<Pair, Integer> computeBigramFrequencies(
+            Map<Integer, List<Integer>> rules, List<Integer> seq,
+            Map<Integer, RuleMetadata> metadata, Set<Integer> artificialTerminals) {
+        return computeBigramFrequenciesCombined(
+                new Parser.ParsedGrammar(rules, seq, metadata), artificialTerminals, false, null);
+    }
+
+    public static Map<Pair, Integer> computeBigramFrequencies(
             Parser.ParsedGrammar grammar,
             Set<Integer> artificialTerminals,
             boolean verbose,
@@ -778,7 +822,8 @@ public class Recompressor {
         extended.add(36); // $
 
         // Start assigning new rule IDs
-        int maxRuleId = oldRules.keySet().stream().max(Integer::compareTo).orElse(255);
+        int maxRuleId = 255;
+        for (int id : oldRules.keySet()) if (id > maxRuleId) maxRuleId = id;
         int nextRuleId = maxRuleId + 1;
 
         // Convert extended sequence to binary rules
@@ -893,46 +938,37 @@ private static void uncrossNonRepeating(
             int ruleId = e.getKey();
             if (artificialTerminals.contains(ruleId)) continue;
 
-            List<Integer> rhs = new ArrayList<>(e.getValue());
-            if (rhs.isEmpty()) continue;
+            List<Integer> origRhs = e.getValue();
+            if (origRhs.isEmpty()) continue;
 
-            // Trimming the left side
-            boolean leftWasFirst = true;
-            while (!rhs.isEmpty()) {
-                int first = rhs.get(0);
-                if (first == c) {
-                    rhs.remove(0); // explicit terminal
-                } else if (isSingleBlockOf(first, c, metadata, artificialTerminals)) {
-                    rhs.remove(0); // implicit terminal (via SingleBlock)
+            // Find trim boundaries using index scan (O(n) vs O(n*k) from repeated remove(0))
+            int left = 0;
+            while (left < origRhs.size()) {
+                int sym = origRhs.get(left);
+                if (sym == c || isSingleBlockOf(sym, c, metadata, artificialTerminals)) {
+                    left++;
                 } else {
                     break;
                 }
             }
 
-            // Trimming the right side
-            boolean rightWasLast = true;
-            while (!rhs.isEmpty()) {
-                int last = rhs.get(rhs.size() - 1);
-                if (last == c) {
-                    rhs.remove(rhs.size() - 1); // explicit terminal
-                } else if (isSingleBlockOf(last, c, metadata, artificialTerminals)) {
-                    rhs.remove(rhs.size() - 1); // implicit terminal (via SingleBlock)
+            int right = origRhs.size();
+            while (right > left) {
+                int sym = origRhs.get(right - 1);
+                if (sym == c || isSingleBlockOf(sym, c, metadata, artificialTerminals)) {
+                    right--;
                 } else {
                     break;
                 }
             }
-
-            // Apply context-based re-expansion if the deleted content belonged to a neighbor.
-            // This is "R cr" and "cl R" rule based on position
 
             List<Integer> newRhs = new ArrayList<>();
 
-            for (int i = 0; i < rhs.size(); i++) {
-                int sym = rhs.get(i);
-                boolean isFirst = (i == 0);
-                boolean isLast = (i == rhs.size() - 1);
+            for (int i = left; i < right; i++) {
+                int sym = origRhs.get(i);
+                boolean isFirst = (i == left);
+                boolean isLast = (i == right - 1);
 
-                // Pop-in on left
                 if (isVariable(sym, rules, artificialTerminals)) {
                     RuleMetadata m = metadata.get(sym);
                     if (m != null && m.getLeftmostTerminal() == c && !isFirst) {
@@ -942,10 +978,8 @@ private static void uncrossNonRepeating(
                     }
                 }
 
-
                 newRhs.add(sym);
 
-                // Pop-in on right
                 if (isVariable(sym, rules, artificialTerminals)) {
                     RuleMetadata m = metadata.get(sym);
                     if (m != null && m.getRightmostTerminal() == c && !isLast) {
@@ -981,42 +1015,24 @@ private static void uncrossNonRepeating(
 
     private static void deleteEmptyRulesAndRewire(Map<Integer, List<Integer>> rules) {
         boolean changed = true;
-
         while (changed) {
-            // 1. Find rules that are empty (no RHS symbols)
-            Set<Integer> emptyRules = new HashSet<>();
-            for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
-                if (e.getValue().isEmpty()) emptyRules.add(e.getKey());
-            }
-
-            if (emptyRules.isEmpty()) {
-                break; // No empty rules left, stop
-            }
-
             changed = false;
-
-            // 2. Remove references to empty rules from all other RHSs
-            for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-                int ruleId = entry.getKey();
-                if (emptyRules.contains(ruleId)) continue; // Will be removed anyway
-
-                List<Integer> rhs = entry.getValue();
-                List<Integer> updated = new ArrayList<>();
-
-                for (int sym : rhs) {
-                    if (!emptyRules.contains(sym)) {
-                        updated.add(sym);
-                    } else {
-                        changed = true;
-                    }
+            Set<Integer> emptyRules = null;
+            for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+                if (e.getValue().isEmpty()) {
+                    if (emptyRules == null) emptyRules = new HashSet<>();
+                    emptyRules.add(e.getKey());
                 }
-                entry.setValue(updated);
             }
+            if (emptyRules == null) break;
 
-            // 3. Remove the empty rules themselves
-            for (int id : emptyRules) {
-                rules.remove(id);
-                changed = true;
+            for (int id : emptyRules) rules.remove(id);
+
+            Set<Integer> toRemove = emptyRules;
+            for (List<Integer> rhs : rules.values()) {
+                if (rhs.removeIf(toRemove::contains)) {
+                    changed = true;
+                }
             }
         }
     }
@@ -1055,7 +1071,6 @@ private static void uncrossNonRepeating(
         for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
             final int ruleId = entry.getKey();
 
-            // Never modify the definition of an artificial terminal.
             if (artificialTerminals.contains(ruleId)) {
                 continue;
             }
@@ -1065,45 +1080,42 @@ private static void uncrossNonRepeating(
                 continue;
             }
 
-            final List<Integer> out = new ArrayList<>(rhs.size());
-            //Case where bigram is non repeating.
-            if (!repeating) {
+            // Quick scan: skip rules that don't contain the bigram
+            if (!containsBigram(rhs, c1, c2, repeating)) {
+                continue;
+            }
 
+            final List<Integer> out = new ArrayList<>(rhs.size());
+            if (!repeating) {
                 for (int i = 0; i < rhs.size(); ) {
-                    // Check for an adjacent (c1, c2) pair starting at the current position.
                     if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
                         out.add(newRuleId);
-                        i += 2; // Advance index past both symbols of the replaced pair.
+                        i += 2;
                     } else {
                         out.add(rhs.get(i));
-                        i++; // Advance index by one.
+                        i++;
                     }
                 }
             } else {
-                //Case where bigram is repeating.
                 final int c = c1;
                 for (int i = 0; i < rhs.size(); ) {
                     int s = rhs.get(i);
 
-                    // If this position does not start a run of c, just copy the symbol.
                     if (s != c) {
                         out.add(s);
                         i++;
                         continue;
                     }
 
-                    // Find the end of the maximal run of c's starting at i.
                     int j = i + 1;
                     while (j < rhs.size() && rhs.get(j) == c) {
                         j++;
                     }
-                    int d = j - i; // The length of the run (c^d).
+                    int d = j - i;
 
-                    // Replace the run using the new rule ID for every pair of c's.
                     if (d >= 2) {
                         int numNewRules = d / 2;
                         int leftover = d % 2;
-
                         for (int t = 0; t < numNewRules; t++) {
                             out.add(newRuleId);
                         }
@@ -1111,36 +1123,46 @@ private static void uncrossNonRepeating(
                             out.add(c);
                         }
                     } else {
-                        // The run has length 1, so no replacement is possible.
                         out.add(c);
                     }
-                    i = j; // Continue scanning after the run.
+                    i = j;
                 }
             }
-            // Update the rule with the new, modified right-hand side.
             entry.setValue(out);
         }
+    }
 
+    private static boolean containsBigram(List<Integer> rhs, int c1, int c2, boolean repeating) {
+        if (!repeating) {
+            for (int i = 0; i < rhs.size() - 1; i++) {
+                if (rhs.get(i) == c1 && rhs.get(i + 1) == c2) return true;
+            }
+        } else {
+            for (int i = 0; i < rhs.size() - 1; i++) {
+                if (rhs.get(i) == c1 && rhs.get(i + 1) == c1) return true;
+            }
+        }
+        return false;
     }
 
 
     //As a tie breaker decide which one to keep according to Lexicographical Order.
-    public static Pair<Integer, Integer> getMostFrequentBigram(
-            Map<Pair<Integer, Integer>, Integer> frequencies,
+    public static Pair getMostFrequentBigram(
+            Map<Pair, Integer> frequencies,
             Set<Integer> artificialTerminals // unused
     ) {
-        Pair<Integer, Integer> best = null;
+        Pair best = null;
         int bestCount = Integer.MIN_VALUE;
 
-        for (Map.Entry<Pair<Integer, Integer>, Integer> e : frequencies.entrySet()) {
-            Pair<Integer, Integer> bg = e.getKey();
+        for (Map.Entry<Pair, Integer> e : frequencies.entrySet()) {
+            Pair bg = e.getKey();
             int count = e.getValue();
 
             if (count > bestCount
                     || (count == bestCount
                     && (best == null
                     || bg.first < best.first
-                    || (bg.first.equals(best.first) && bg.second < best.second)))) {
+                    || (bg.first == best.first && bg.second < best.second)))) {
                 best = bg;
                 bestCount = count;
             }
@@ -1173,13 +1195,11 @@ private static void uncrossNonRepeating(
         }
 
         // Step 3: Replace occurrences of unit rules with their representative
-        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
-            int ruleId = entry.getKey();
-            List<Integer> rhs = entry.getValue();
+        for (List<Integer> rhs : rules.values()) {
             for (int i = 0; i < rhs.size(); i++) {
-                int sym = rhs.get(i);
-                if (representative.containsKey(sym)) {
-                    Parser.RuleEditor.set(rules, ruleId, i, representative.get(sym));
+                Integer rep = representative.get(rhs.get(i));
+                if (rep != null) {
+                    rhs.set(i, rep);
                 }
             }
         }
