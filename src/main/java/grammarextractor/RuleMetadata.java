@@ -75,6 +75,9 @@ public class RuleMetadata {
         final int[] lRun  = new int[N];   // left run length
         final int[] rRun  = new int[N];   // right run length
         final int[] vocc  = new int[N];   // virtual occurrence count
+        // isRule[id] replaces rules.containsKey(id) in all inner loops, avoiding HashMap boxing
+        final boolean[] isRule = new boolean[N];
+        for (int id : rules.keySet()) isRule[id] = true;
 
         // Initialize terminals 0–255
         for (int t = 0; t < 256; t++) {
@@ -88,6 +91,7 @@ public class RuleMetadata {
         if (artificialTerminals != null) {
             for (int id : artificialTerminals) {
                 if (id < N) {
+                    isRule[id] = false; // artificial terminals are not proper rules
                     len[id] = 1; lTerm[id] = id; rTerm[id] = id;
                     sb[id] = 1; lRun[id] = 1; rRun[id] = 1;
                 }
@@ -99,7 +103,7 @@ public class RuleMetadata {
         final int[] inDeg = new int[N];
         for (List<Integer> rhs : rules.values()) {
             for (int sym : rhs) {
-                if (sym < N && rules.containsKey(sym)) inDeg[sym]++;
+                if (sym < N && isRule[sym]) inDeg[sym]++;
             }
         }
         final Deque<Integer> queue = new ArrayDeque<>();
@@ -114,7 +118,7 @@ public class RuleMetadata {
             final List<Integer> rhs = rules.get(u);
             if (rhs == null) continue;
             for (int v : rhs) {
-                if (v < N && rules.containsKey(v) && --inDeg[v] == 0) queue.add(v);
+                if (v < N && isRule[v] && --inDeg[v] == 0) queue.add(v);
             }
         }
         if (cnt != rules.size()) {
@@ -127,53 +131,48 @@ public class RuleMetadata {
             final List<Integer> rhs = rules.get(id);
             if (rhs == null || rhs.isEmpty()) continue;
 
-            // expansion length
-            int tLen = 0;
-            for (int sym : rhs) tLen += len[sym];
-            len[id] = tLen;
-
-            // leftmost terminal (first child with lTerm != -1)
+            // leftmost terminal: O(1) — first child's lTerm in a valid grammar
             int lT = -1;
             for (int sym : rhs) { int v = lTerm[sym]; if (v != -1) { lT = v; break; } }
             lTerm[id] = lT;
 
-            // rightmost terminal (last child with rTerm != -1)
+            // rightmost terminal: O(1) — last child's rTerm in a valid grammar
             int rT = -1;
             for (int j = rhs.size() - 1; j >= 0; j--) { int v = rTerm[rhs.get(j)]; if (v != -1) { rT = v; break; } }
             rTerm[id] = rT;
 
-            // isSingleBlock: leftTerm == rightTerm AND every child is a single block of the same terminal
+            // Combined forward pass: length + isSingleBlock + leftRun
+            // isSingleBlock requires lT == rT and every child is a single block of lT.
+            // leftRun walks from the left while lTerm[sym] == lT and stops when symLR < symLen.
+            int tLen = 0;
             boolean single = (lT != -1) && (lT == rT);
-            if (single) {
-                for (int sym : rhs) {
-                    if (sb[sym] == 0 || lTerm[sym] != lT) { single = false; break; }
+            int lRunAcc = 0;
+            boolean lRunDone = (lT == -1);
+            for (int sym : rhs) {
+                final int symLen = len[sym];
+                tLen += symLen;
+                if (single && (sb[sym] == 0 || lTerm[sym] != lT)) single = false;
+                if (!lRunDone) {
+                    if (lTerm[sym] != lT) {
+                        lRunDone = true;
+                    } else {
+                        final int symLR = lRun[sym];
+                        lRunAcc += symLR;
+                        if (symLR < symLen) lRunDone = true;
+                    }
                 }
             }
-            sb[id] = single ? 1 : 0;
+            len[id]  = tLen;
+            sb[id]   = single ? 1 : 0;
+            lRun[id] = lRunAcc;
 
-            // leftRun: walk RHS left-to-right while child's leftTerm matches; stop when a child's run < its length
-            if (lT == -1) {
-                lRun[id] = 0;
-            } else {
-                int run = 0;
-                for (int sym : rhs) {
-                    if (lTerm[sym] != lT) break;
-                    int symLR = lRun[sym];
-                    run += symLR;
-                    if (symLR < len[sym]) break;
-                }
-                lRun[id] = run;
-            }
-
-            // rightRun: symmetric, walk right-to-left
-            if (rT == -1) {
-                rRun[id] = 0;
-            } else {
+            // Backward pass: rightRun
+            if (rT != -1) {
                 int run = 0;
                 for (int j = rhs.size() - 1; j >= 0; j--) {
-                    int sym = rhs.get(j);
+                    final int sym = rhs.get(j);
                     if (rTerm[sym] != rT) break;
-                    int symRR = rRun[sym];
+                    final int symRR = rRun[sym];
                     run += symRR;
                     if (symRR < len[sym]) break;
                 }
@@ -183,7 +182,7 @@ public class RuleMetadata {
 
         // ── Vocc: seed from sequence, propagate top-down ────────────────────
         for (int sym : sequence) {
-            if (sym < N && rules.containsKey(sym)) vocc[sym]++;
+            if (sym < N && isRule[sym]) vocc[sym]++;
         }
         for (int i = 0; i < cnt; i++) {
             int u = order[i];
@@ -192,7 +191,7 @@ public class RuleMetadata {
             final List<Integer> rhs = rules.get(u);
             if (rhs == null) continue;
             for (int v : rhs) {
-                if (v < N && rules.containsKey(v)) vocc[v] += vU;
+                if (v < N && isRule[v]) vocc[v] += vU;
             }
         }
 
