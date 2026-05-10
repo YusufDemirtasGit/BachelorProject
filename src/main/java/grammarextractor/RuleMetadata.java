@@ -75,15 +75,18 @@ public class RuleMetadata {
         final int[] lRun  = new int[N];   // left run length
         final int[] rRun  = new int[N];   // right run length
         final int[] vocc  = new int[N];   // virtual occurrence count
-        // isRule[id] replaces rules.containsKey(id) in all inner loops, avoiding HashMap boxing
+        // isRule[id] replaces rules.containsKey(id) in all inner loops, avoiding HashMap boxing.
+        // rhsArr[id] replaces rules.get(id). ruleIds[] avoids rules.keySet() unboxing.
         final boolean[] isRule = new boolean[N];
-        // rhsArr[id] replaces rules.get(id) in all loops, avoiding HashMap lookup overhead
         @SuppressWarnings("unchecked")
         final List<Integer>[] rhsArr = new List[N];
+        final int[] ruleIds = new int[rules.size()];
+        int ruleCount = 0;
         for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
             final int id = e.getKey();
             isRule[id] = true;
             rhsArr[id] = e.getValue();
+            ruleIds[ruleCount++] = id;
         }
 
         // Initialize terminals 0–255
@@ -115,22 +118,24 @@ public class RuleMetadata {
                 if (sym < N && isRule[sym]) inDeg[sym]++;
             }
         }
-        final Deque<Integer> queue = new ArrayDeque<>();
-        for (int id : rules.keySet()) {
-            if (inDeg[id] == 0) queue.add(id);
+        // Primitive int[] stack: any valid topological order (DFS or BFS) is correct here.
+        final int[] stack = new int[ruleCount];
+        int top = 0;
+        for (int id : ruleIds) {
+            if (inDeg[id] == 0) stack[top++] = id;
         }
-        final int[] order = new int[rules.size()]; // top-down (roots first)
+        final int[] order = new int[ruleCount]; // top-down (roots first)
         int cnt = 0;
-        while (!queue.isEmpty()) {
-            int u = queue.poll();
+        while (top > 0) {
+            int u = stack[--top];
             order[cnt++] = u;
             final List<Integer> rhs = rhsArr[u];
             if (rhs == null) continue;
             for (int v : rhs) {
-                if (v < N && isRule[v] && --inDeg[v] == 0) queue.add(v);
+                if (v < N && isRule[v] && --inDeg[v] == 0) stack[top++] = v;
             }
         }
-        if (cnt != rules.size()) {
+        if (cnt != ruleCount) {
             System.err.println("Warning: Cycle detected in grammar rules. Metadata may be incomplete.");
         }
 
@@ -205,8 +210,8 @@ public class RuleMetadata {
         }
 
         // ── Build result map ─────────────────────────────────────────────────
-        final Map<Integer, RuleMetadata> meta = new HashMap<>((int)(rules.size() * 1.4) + 1);
-        for (int id : rules.keySet()) {
+        final Map<Integer, RuleMetadata> meta = new HashMap<>((int)(ruleCount * 1.4) + 1);
+        for (int id : ruleIds) {
             meta.put(id, new RuleMetadata(vocc[id], len[id], lTerm[id], rTerm[id],
                                           sb[id] == 1, lRun[id], rRun[id]));
         }
