@@ -36,7 +36,8 @@ public class GrammarApp extends JFrame {
         FULL_ROUNDTRIP("Full roundtrip  (Compress + Extract + Recompress)"),
         COMPRESS_ONLY("Compress only"),
         COMPRESS_EXTRACT("Compress + Extract"),
-        EXTRACT_RECOMPRESS("Extract + Recompress");
+        EXTRACT_RECOMPRESS("Extract + Recompress"),
+        RECOMPRESS_ONLY("Recompress only  (direct, no extract)");
 
         final String label;
         Pipeline(String label) { this.label = label; }
@@ -766,9 +767,10 @@ public class GrammarApp extends JFrame {
             .mapToDouble(cnt -> { double p = (double)cnt/n; return -p * Math.log(p) / Math.log(2); })
             .sum();
 
-        boolean doCompress   = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.COMPRESS_ONLY || pipe == Pipeline.COMPRESS_EXTRACT;
-        boolean doExtract    = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.COMPRESS_EXTRACT || pipe == Pipeline.EXTRACT_RECOMPRESS;
-        boolean doRecompress = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.EXTRACT_RECOMPRESS;
+        boolean doCompress       = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.COMPRESS_ONLY || pipe == Pipeline.COMPRESS_EXTRACT;
+        boolean doExtract        = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.COMPRESS_EXTRACT || pipe == Pipeline.EXTRACT_RECOMPRESS;
+        boolean doRecompress     = pipe == Pipeline.FULL_ROUNDTRIP || pipe == Pipeline.EXTRACT_RECOMPRESS;
+        boolean doRecompressOnly = pipe == Pipeline.RECOMPRESS_ONLY;
 
         // Initialize grammar
         progress.update("PHASE:Initializing grammar...");
@@ -886,6 +888,39 @@ public class GrammarApp extends JFrame {
             }
         }
 
+        if (doRecompressOnly) {
+            progress.update("PHASE:Initializing grammar for recompression...");
+            Recompressor.InitializedGrammar init2 = Recompressor.initializeWithSentinelsAndRootRule(orig);
+            Map<Integer,List<Integer>> r2 = new LinkedHashMap<>(init2.grammar().grammarRules());
+            List<Integer> s2 = new ArrayList<>(init2.grammar().sequence());
+            Set<Integer>  a2 = new HashSet<>(init2.artificialTerminals());
+            int nx2 = r2.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
+            exInitSz = r2.values().stream().mapToInt(List::size).sum() + s2.size();
+
+            progress.update("PHASE:Recompressing...");
+            for (int pass = 1; pass <= actualMax; pass++) {
+                long t0 = System.nanoTime();
+                progress.update("Recomp pass " + pass + "...");
+                Map<Integer,RuleMetadata> m = RuleMetadata.computeAll(r2, s2, a2);
+                Map<Pair,Integer> freqs =
+                    Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(r2, s2, m), a2, false, null);
+                if (freqs.isEmpty()) break;
+                Pair bg = Recompressor.getMostFrequentBigram(freqs, a2);
+                if (bg == null || freqs.getOrDefault(bg, 0) <= 1) break;
+                Recompressor.uncrossBigrams(bg.first, bg.second, r2, m, a2);
+                int nid = nx2++;
+                Recompressor.replaceBigramInRules(bg.first, bg.second, nid, r2, a2);
+                a2.add(nid);
+                Recompressor.removeRedundantRules(r2, s2);
+                int sz  = r2.values().stream().mapToInt(List::size).sum() + s2.size();
+                int prv = recompPasses.isEmpty() ? exInitSz : recompPasses.get(recompPasses.size()-1).grammarSize();
+                recompPasses.add(new PassStats(pass, sz, r2.size(), System.nanoTime()-t0,
+                    RecompressionViewer.sym(bg.first) + "+" + RecompressionViewer.sym(bg.second),
+                    freqs.get(bg), prv - sz));
+            }
+            recompFinal = r2.values().stream().mapToInt(List::size).sum() + s2.size();
+        }
+
         progress.update("PHASE:Building report...");
         String preview = inputText.length() > 300 ? inputText.substring(0, 300) + "..." : inputText;
         return new TechnicalReport(
@@ -927,6 +962,15 @@ public class GrammarApp extends JFrame {
                     reductionData(r), "Pass","Symbols saved", CHART[2])
             ));
             root.add(Box.createVerticalStrut(12));
+        } else if (hasRecomp) {
+            root.add(chartRow(
+                lineChart("Grammar Size Convergence  (Recompression)",
+                    recompSizeSeriesData(r), new String[]{"Recompression"},
+                    new Color[]{CHART[1]}, "Pass","Symbols"),
+                barChart("Size Reduction per Pass",
+                    recompReductionData(r), "Pass","Symbols saved", CHART[2])
+            ));
+            root.add(Box.createVerticalStrut(12));
         }
 
         // Row 2: Bigrams before  |  Bigrams after
@@ -940,6 +984,12 @@ public class GrammarApp extends JFrame {
         if (hasCompress) {
             root.add(chartRow(
                 barChart("Time per Pass (us)", timeData(r), "Pass","us", CHART[3]),
+                charDistChart("Character Frequency Distribution", r.charFreqs)
+            ));
+            root.add(Box.createVerticalStrut(12));
+        } else if (hasRecomp) {
+            root.add(chartRow(
+                barChart("Time per Pass (us)", recompTimeData(r), "Pass","us", CHART[3]),
                 charDistChart("Character Frequency Distribution", r.charFreqs)
             ));
             root.add(Box.createVerticalStrut(12));
@@ -976,6 +1026,17 @@ public class GrammarApp extends JFrame {
         JPanel p = new JPanel(new GridLayout(1, 6, 8, 0));
         p.setBackground(C_BG);
         p.setMaximumSize(new Dimension(Integer.MAX_VALUE, 84));
+        if (r.pipeline == Pipeline.RECOMPRESS_ONLY) {
+            double ratio = (double) r.extractInitSize / Math.max(1, r.recompFinalSize);
+            double pct   = 100.0 * (1 - (double) r.recompFinalSize / Math.max(1, r.extractInitSize));
+            p.add(kpiCard("Input Length",   fmt(r.inputLength) + " chars",    CHART[0]));
+            p.add(kpiCard("Recomp Passes",  "" + r.recompPasses.size(),       CHART[2]));
+            p.add(kpiCard("Initial Size",   fmt(r.extractInitSize) + " syms", CHART[3]));
+            p.add(kpiCard("Final Size",     fmt(r.recompFinalSize) + " syms", C_SEL));
+            p.add(kpiCard("Ratio",          String.format("%.2fx  (%.0f%%)", ratio, pct), CHART[4]));
+            p.add(kpiCard("Total Time",     String.format("%.1f ms", r.totalTimeNs/1e6), C_ACCENT));
+            return p;
+        }
         double ratio = (double) r.initialSize / Math.max(1, r.compressedSize);
         double pct   = 100.0 * (1 - (double) r.compressedSize / r.initialSize);
         p.add(kpiCard("Input Length",    fmt(r.inputLength) + " chars",  CHART[0]));
@@ -1030,6 +1091,23 @@ public class GrammarApp extends JFrame {
         xs[0]=0; ys[0]=0;
         for(int i=0;i<r.compPasses.size();i++){xs[i+1]=r.compPasses.get(i).pass(); ys[i+1]=r.compPasses.get(i).ruleCount();}
         return new double[][][]{{xs,ys}};
+    }
+
+    private double[][][] recompSizeSeriesData(TechnicalReport r) {
+        int n=r.recompPasses.size(); double[] xs=new double[n+1], ys=new double[n+1];
+        xs[0]=0; ys[0]=r.extractInitSize;
+        for(int i=0;i<n;i++){xs[i+1]=r.recompPasses.get(i).pass(); ys[i+1]=r.recompPasses.get(i).grammarSize();}
+        return new double[][][]{{xs,ys}};
+    }
+    private double[][] recompReductionData(TechnicalReport r) {
+        int n=r.recompPasses.size(); double[] xs=new double[n], ys=new double[n];
+        for(int i=0;i<n;i++){xs[i]=r.recompPasses.get(i).pass(); ys[i]=r.recompPasses.get(i).saved();}
+        return new double[][]{xs,ys};
+    }
+    private double[][] recompTimeData(TechnicalReport r) {
+        int n=r.recompPasses.size(); double[] xs=new double[n], ys=new double[n];
+        for(int i=0;i<n;i++){xs[i]=r.recompPasses.get(i).pass(); ys[i]=r.recompPasses.get(i).timeNs()/1_000.0;}
+        return new double[][]{xs,ys};
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -1232,7 +1310,7 @@ public class GrammarApp extends JFrame {
     // ── Pass table (JTable) ──────────────────────────────────────────────────
 
     private JPanel passTable(TechnicalReport r) {
-        List<PassStats> ps = r.compPasses;
+        List<PassStats> ps = r.compPasses.isEmpty() ? r.recompPasses : r.compPasses;
         String[] cols = {"#", "Size", "Saved", "Time (us)", "Bigram", "Freq"};
         String[][] data = new String[ps.size()][6];
         for (int i = 0; i < ps.size(); i++) {

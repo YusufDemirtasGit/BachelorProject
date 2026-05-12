@@ -42,8 +42,8 @@ public class RecompressionViewer extends JFrame {
         String phase,           // INIT | FREQ | SELECT | UNCROSS | REPLACE | DONE | FINAL
         Map<Integer, List<Integer>>          rules,
         List<Integer>                        sequence,
-        Pair<Integer, Integer>               selectedBigram,
-        Map<Pair<Integer, Integer>, Integer> frequencies,
+        Pair               selectedBigram,
+        Map<Pair, Integer> frequencies,
         int    newRuleId,
         int    grammarSize,
         String description
@@ -110,7 +110,7 @@ public class RecompressionViewer extends JFrame {
             Parser.ParsedGrammar wg = new Parser.ParsedGrammar(rules, seq, meta);
 
             // ① compute frequencies
-            Map<Pair<Integer,Integer>, Integer> freqs =
+            Map<Pair, Integer> freqs =
                 Recompressor.computeBigramFrequencies(wg, art, false, null);
             snap(pass, "FREQ", rules, seq, null, freqs, -1, meta,
                 "Pass " + pass + ": " + freqs.size() + " distinct bigrams");
@@ -121,7 +121,7 @@ public class RecompressionViewer extends JFrame {
             }
 
             // ② select most frequent
-            Pair<Integer,Integer> bg = Recompressor.getMostFrequentBigram(freqs, art);
+            Pair bg = Recompressor.getMostFrequentBigram(freqs, art);
             if (bg == null || freqs.getOrDefault(bg, 0) <= 1) {
                 snap(pass, "DONE", rules, seq, bg, freqs, -1, meta, "All frequencies ≤ 1 — done");
                 break;
@@ -164,7 +164,7 @@ public class RecompressionViewer extends JFrame {
     /** Deep-copy current state into a new snapshot record. */
     private void snap(int pass, String phase,
                       Map<Integer, List<Integer>> rules, List<Integer> seq,
-                      Pair<Integer,Integer> bigram, Map<Pair<Integer,Integer>,Integer> freqs,
+                      Pair bigram, Map<Pair,Integer> freqs,
                       int newId, Map<Integer, RuleMetadata> ignored, String desc) {
         Map<Integer, List<Integer>> rc = new LinkedHashMap<>();
         rules.forEach((k, v) -> rc.put(k, new ArrayList<>(v)));
@@ -433,7 +433,7 @@ public class RecompressionViewer extends JFrame {
             }
 
             // Sort descending by frequency, top 14
-            List<Map.Entry<Pair<Integer,Integer>,Integer>> entries = new ArrayList<>(snap.frequencies.entrySet());
+            List<Map.Entry<Pair,Integer>> entries = new ArrayList<>(snap.frequencies.entrySet());
             entries.sort((a, b) -> b.getValue() - a.getValue());
             if (entries.size() > 14) entries = entries.subList(0, 14);
 
@@ -444,7 +444,7 @@ public class RecompressionViewer extends JFrame {
             int chartH = bot - hdrH - 20;
 
             for (int i = 0; i < n; i++) {
-                Pair<Integer,Integer> bg = entries.get(i).getKey();
+                Pair bg = entries.get(i).getKey();
                 int freq = entries.get(i).getValue();
                 boolean isSel = bg.equals(snap.selectedBigram);
 

@@ -473,12 +473,12 @@
                             }
 
                             // Step 4: Compute bigram frequencies using new method
-                            Map<Pair<Integer, Integer>, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial,false,null);
+                            Map<Pair, Integer> freqs = Recompressor.computeBigramFrequencies(initialized, artificial,false,null);
 
                             // Step 5: Print frequencies
                             System.out.println("\n=== Bigram Frequencies ===");
-                            for (Map.Entry<Pair<Integer, Integer>, Integer> entry : freqs.entrySet()) {
-                                Pair<Integer, Integer> bigram = entry.getKey();
+                            for (Map.Entry<Pair, Integer> entry : freqs.entrySet()) {
+                                Pair bigram = entry.getKey();
                                 int freq = entry.getValue();
 
                                 String left = formatSymbol(bigram.first);
@@ -514,23 +514,23 @@
 
 
                         //  Step 4: Compute compressed-space frequency map (new logic)
-                        Map<Pair<Integer, Integer>, Integer> advancedFreqs =
+                        Map<Pair, Integer> advancedFreqs =
                                 Recompressor.computeBigramFrequencies(parsed, artificial,false,null);
                         long tTotalEnd = System.nanoTime();
 
                         System.out.println("Time for advanced frequency computation: " + (tTotalEnd - tTotalStart) / 1_000_000 + "ms");
 
                         //  Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(parsed,false,false);
+                        Map<Pair, Integer> naiveFreqs = computeFreqsFromDecompressed(parsed,false,false);
 
                         //  Step 6: Compare all bigrams
-                        Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
+                        Set<Pair> allBigrams = new HashSet<>();
                         allBigrams.addAll(advancedFreqs.keySet());
                         allBigrams.addAll(naiveFreqs.keySet());
 
                         boolean mismatchFound = false;
 
-                        for (Pair<Integer, Integer> bigram : allBigrams) {
+                        for (Pair bigram : allBigrams) {
                             int advCount = advancedFreqs.getOrDefault(bigram, 0);
                             int naiveCount = naiveFreqs.getOrDefault(bigram, 0);
                             if (advCount != naiveCount) {
@@ -580,7 +580,7 @@
                         Path grammarFile17 = Path.of(scanner.nextLine().trim());
                         //Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,3,true,true, "Paper_Test_recompressed.txt");
+                        Recompressor.recompressNTimes(original17, 0,1,true,false, "Paper_Test_recompressed.txt");
 
                         break;
                     case 15: {
@@ -593,7 +593,7 @@
 
 
                         //  Step 5: Compute naive decompression-based frequency map
-                        Map<Pair<Integer, Integer>, Integer> naiveFreqs = computeFreqsFromDecompressed(original,false,true);
+                        Map<Pair, Integer> naiveFreqs = computeFreqsFromDecompressed(original,false,true);
 
 
                         System.out.println("=== Naive Frequency Roundtrip Results ===");
@@ -879,7 +879,7 @@
             }
         }
 
-        public static Map<Pair<Integer, Integer>, Integer> computeFreqsFromDecompressed(
+        public static Map<Pair, Integer> computeFreqsFromDecompressed(
                 Parser.ParsedGrammar grammar,
                 boolean removeSentinels,
                 boolean addSentinels
@@ -900,7 +900,7 @@
                 //System.out.println("Removed sentinel characters '#' and '$' from decompressed string.");
             }
 
-            Map<Pair<Integer, Integer>, Integer> bigramFreqs = new HashMap<>();
+            Map<Pair, Integer> bigramFreqs = new HashMap<>();
 
             //System.out.println("\n=== Starting Naive Bigram Frequency Computation from Decompressed String ===");
             //System.out.println("Decompressed: " + decompressed);
@@ -918,7 +918,7 @@
                 int len = j - i;
                 if (len >= 2) {
                     int freq = len / 2;
-                    Pair<Integer, Integer> bigram = Pair.of((int) a, (int) a);
+                    Pair bigram = new Pair((int) a, (int) a);
                     bigramFreqs.merge(bigram, freq, Integer::sum);
                     //System.out.printf("Detected run %c^%d → (%c,%c) += %d%n", a, len, a, a, freq);
 
@@ -938,7 +938,7 @@
                 char b = decompressed.charAt(k + 1);
 
                 if (a != b) {
-                    Pair<Integer, Integer> pair = Pair.of((int) a, (int) b);
+                    Pair pair = new Pair((int) a, (int) b);
                     bigramFreqs.merge(pair, 1, Integer::sum);
                     //System.out.printf("Non-repeating bigram (%c,%c) += 1%n", a, b);
                 } else {

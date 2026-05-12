@@ -202,19 +202,19 @@ public class GrammarTests {
                 initialized.grammarRules(), initialized.sequence(), metadata);
 
         // Advanced (compressed-space) frequencies
-        Map<Pair<Integer, Integer>, Integer> advancedFreqs =
+        Map<Pair, Integer> advancedFreqs =
                 Recompressor.computeBigramFrequencies(withMeta, artificial, false, null);
 
         // Naive (decompression-based) frequencies — addSentinels=false since they're already in the grammar
-        Map<Pair<Integer, Integer>, Integer> naiveFreqs =
+        Map<Pair, Integer> naiveFreqs =
                 Main.computeFreqsFromDecompressed(withMeta, false, false);
 
         // Every bigram in either map must match
-        Set<Pair<Integer, Integer>> allBigrams = new HashSet<>();
+        Set<Pair> allBigrams = new HashSet<>();
         allBigrams.addAll(advancedFreqs.keySet());
         allBigrams.addAll(naiveFreqs.keySet());
 
-        for (Pair<Integer, Integer> bigram : allBigrams) {
+        for (Pair bigram : allBigrams) {
             int adv   = advancedFreqs.getOrDefault(bigram, 0);
             int naive = naiveFreqs.getOrDefault(bigram, 0);
             assertEquals(naive, adv,
@@ -240,7 +240,7 @@ public class GrammarTests {
         Parser.ParsedGrammar working = new Parser.ParsedGrammar(
                 init.grammar().grammarRules(), init.grammar().sequence(), metadata);
 
-        Map<Pair<Integer, Integer>, Integer> freqs =
+        Map<Pair, Integer> freqs =
                 Recompressor.computeBigramFrequencies(working, init.artificialTerminals(), false, null);
 
         // There must be at least one bigram with frequency > 1 (meaning compression is possible).

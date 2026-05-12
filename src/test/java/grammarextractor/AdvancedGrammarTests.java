@@ -40,11 +40,11 @@ class AdvancedGrammarTests {
                 new Parser.ParsedGrammar(rules, seq, Collections.emptyMap()), art);
             Parser.ParsedGrammar wg = new Parser.ParsedGrammar(rules, seq, meta);
 
-            Map<Pair<Integer,Integer>, Integer> freqs =
+            Map<Pair, Integer> freqs =
                 Recompressor.computeBigramFrequencies(wg, art, false, null);
             if (freqs.isEmpty()) break;
 
-            Pair<Integer,Integer> bg = Recompressor.getMostFrequentBigram(freqs, art);
+            Pair bg = Recompressor.getMostFrequentBigram(freqs, art);
             if (bg == null || freqs.getOrDefault(bg, 0) <= 1) break;
 
             Recompressor.uncrossBigrams(bg.first, bg.second, rules, meta, art);

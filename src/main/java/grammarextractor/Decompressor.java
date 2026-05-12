@@ -1,7 +1,5 @@
 package grammarextractor;
 
-import java.io.IOException;
-import java.io.Writer;
 import java.util.*;
 
 public class Decompressor {
@@ -18,11 +16,52 @@ public class Decompressor {
         return output.toString();
     }
 
+    public static String decompressPrefix(Parser.ParsedGrammar grammar, int maxChars) {
+        StringBuilder output = new StringBuilder(Math.min(maxChars, 4096));
+        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+        Deque<Integer> stack = new ArrayDeque<>();
+
+        List<Integer> seq = grammar.sequence();
+        for (int i = seq.size() - 1; i >= 0; i--) stack.push(seq.get(i));
+
+        while (!stack.isEmpty() && output.length() < maxChars) {
+            int sym = stack.pop();
+            if (sym < 256) {
+                output.append((char) sym);
+                continue;
+            }
+            List<Integer> rhs = rules.get(sym);
+            if (rhs == null) continue;
+            for (int i = rhs.size() - 1; i >= 0; i--) stack.push(rhs.get(i));
+        }
+        return output.substring(0, Math.min(output.length(), maxChars));
+    }
+
+    public static Map<Character, Integer> charFrequencies(Parser.ParsedGrammar grammar) {
+        Map<Character, Integer> freqs = new TreeMap<>();
+        Map<Integer, List<Integer>> rules = grammar.grammarRules();
+        Deque<Integer> stack = new ArrayDeque<>();
+
+        List<Integer> seq = grammar.sequence();
+        for (int i = seq.size() - 1; i >= 0; i--) stack.push(seq.get(i));
+
+        while (!stack.isEmpty()) {
+            int sym = stack.pop();
+            if (sym < 256) {
+                freqs.merge((char) sym, 1, Integer::sum);
+                continue;
+            }
+            List<Integer> rhs = rules.get(sym);
+            if (rhs == null) continue;
+            for (int i = rhs.size() - 1; i >= 0; i--) stack.push(rhs.get(i));
+        }
+        return freqs;
+    }
+
     private static void expand(int startSymbol,
                                         Map<Integer, List<Integer>> grammar,
                                         StringBuilder output) {
 
-        // Use a stack to simulate recursion
         Deque<Integer> symbolStack = new ArrayDeque<>();
         symbolStack.push(startSymbol);
 
@@ -39,7 +78,6 @@ public class Decompressor {
                 throw new IllegalArgumentException("Missing rule for non-terminal: R" + symbol);
             }
 
-            // Push symbols in reverse order so they're processed left-to-right
             for (int i = rhs.size() - 1; i >= 0; i--) {
                 symbolStack.push(rhs.get(i));
             }
