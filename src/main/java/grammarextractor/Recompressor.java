@@ -4,6 +4,10 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -13,6 +17,47 @@ import static grammarextractor.Main.formatSymbol;
 
 public class Recompressor {
 
+    // Parallelize a stage only when the grammar is large enough that thread overhead pays off.
+    // Below this rule count, the serial path is faster.
+    private static final int MIN_RULES_FOR_PARALLEL = 2000;
+
+    private static ForkJoinPool parallelPool;
+    private static int parallelPoolSize = -1;
+
+    /** Get/create the shared ForkJoinPool. Recreates if {@code requestedThreads} differs from current. */
+    public static synchronized ForkJoinPool getPool(int requestedThreads) {
+        int target = (requestedThreads > 0)
+                ? requestedThreads
+                : Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+        if (parallelPool == null || parallelPoolSize != target) {
+            if (parallelPool != null) parallelPool.shutdown();
+            parallelPool = new ForkJoinPool(target);
+            parallelPoolSize = target;
+        }
+        return parallelPool;
+    }
+
+    /** Shut down the shared pool. Useful between benchmark runs that vary thread count. */
+    public static synchronized void shutdownParallelPool() {
+        if (parallelPool != null) {
+            parallelPool.shutdown();
+            parallelPool = null;
+            parallelPoolSize = -1;
+        }
+    }
+
+
+    public static void recompressNTimes(
+            Parser.ParsedGrammar originalGrammar,
+            int maxPasses,
+            int verbosity,
+            boolean initializeGrammar,
+            boolean roundtrip,
+            String output
+    ) {
+        recompressNTimes(originalGrammar, maxPasses, verbosity, initializeGrammar, roundtrip, output,
+                /*parallel=*/false, /*threads=*/0);
+    }
 
     public static void recompressNTimes(
             Parser.ParsedGrammar originalGrammar,
@@ -20,8 +65,11 @@ public class Recompressor {
             int verbosity,               // now integer 0–3
             boolean initializeGrammar,
             boolean roundtrip,
-            String output
+            String output,
+            boolean parallel,
+            int threads
     ) {
+        final ForkJoinPool pool = parallel ? getPool(threads) : null;
         final String logFile = output + "_logs.txt";
 
         BufferedWriter logWriter = null;
@@ -82,10 +130,13 @@ public class Recompressor {
             log.accept(2, " Initial nextRuleId = " + nextRuleId);
 
             log.accept(3, " Computing initial metadata...");
-            Map<Integer, RuleMetadata> metadata = RuleMetadata.computeAll(
+            RuleMetadataView view = RuleMetadata.computeAllView(
                     new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
                     artificialTerminals
             );
+            // Map kept only for roundtrip checks + log dumping; not used on the hot path.
+            Map<Integer, RuleMetadata> metadata = (verbosity >= 3 || roundtrip)
+                    ? RuleMetadata.viewToMap(view) : Collections.emptyMap();
             log.accept(3, RuleMetadata.metadataToString(metadata));
             log.accept(3, "================================");
 
@@ -102,25 +153,21 @@ public class Recompressor {
 
                 // --- metadata (already timed) ---
                 long metaStartNs = System.nanoTime();
-                metadata = RuleMetadata.computeAll(
+                view = RuleMetadata.computeAllView(
                         new Parser.ParsedGrammar(rules, sequence, Collections.emptyMap()),
-                        artificialTerminals
+                        artificialTerminals,
+                        (parallel && rules.size() >= MIN_RULES_FOR_PARALLEL) ? pool : null
                 );
                 long metaEndNs = System.nanoTime();
                 log.accept(2, "Time for metadata computation: " +(double) (metaEndNs - metaStartNs) / 1_000_000 + "ms");
-
-                Parser.ParsedGrammar workingGrammar = new Parser.ParsedGrammar(rules, sequence, metadata);
 
                 // --- bigram frequencies ---
                 log.accept(3, " Computing bigram frequencies...");
                 long freqStartNs = System.nanoTime();
                 Map<Pair, Integer> frequencies =
-                        computeBigramFrequencies(
-                                workingGrammar,
-                                artificialTerminals,
-                                verbosity >= 3,
-                                msg -> log.accept(3, msg)
-                        );
+                        (parallel && rules.size() >= MIN_RULES_FOR_PARALLEL)
+                                ? computeBigramFrequenciesParallelView(rules, view, artificialTerminals, pool)
+                                : computeBigramFrequenciesView(rules, view, artificialTerminals);
                 long freqEndNs = System.nanoTime();
                 log.accept(2, "Time for bigram frequency computation: " +(double) (freqEndNs - freqStartNs) / 1_000_000 + "ms");
 
@@ -147,13 +194,21 @@ public class Recompressor {
 
                 // --- uncross ---
                 long uncrossStartNs = System.nanoTime();
-                uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
+                if (parallel && rules.size() >= MIN_RULES_FOR_PARALLEL) {
+                    uncrossBigramsParallelView(c1, c2, rules, view, artificialTerminals, pool);
+                } else {
+                    uncrossBigramsView(c1, c2, rules, view, artificialTerminals);
+                }
                 long uncrossEndNs = System.nanoTime();
                 log.accept(2, "Time for uncrossing bigrams: " +(double) (uncrossEndNs - uncrossStartNs) / 1_000_000 + "ms");
 
                 // --- replace ---
                 long replaceStartNs = System.nanoTime();
-                replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
+                if (parallel && rules.size() >= MIN_RULES_FOR_PARALLEL) {
+                    replaceBigramInRulesParallel(c1, c2, newRuleId, rules, artificialTerminals, pool);
+                } else {
+                    replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
+                }
                 long replaceEndNs = System.nanoTime();
                 log.accept(2, "Time for replacing bigram with new rule: " +(double) (replaceEndNs - replaceStartNs) / 1_000_000 + "ms");
 
@@ -186,7 +241,7 @@ public class Recompressor {
                 }
 
                 long passEndNs = System.nanoTime();
-                log.accept(1, "Time required for Pass " + pass + ": " +(double) (passEndNs - passStartNs) / 1_000_000 + "ms");
+                log.accept(1, "Time required for Pass " + pass + ": " +(double) ((passEndNs - passStartNs) / 1_000_000) + "ms");
 
                 if (verbosity > 0) {
                     try { logWriter.flush(); } catch (IOException ignore) {}
@@ -795,6 +850,168 @@ public class Recompressor {
         return computeBigramFrequenciesCombined(grammar, artificialTerminals, verbose, log);
     }
 
+    // Per-rule accumulation helper used by the parallel path. No logging — log writer is not thread-safe,
+    // and per-rule logs are debug-only (verbose=3) so we accept losing them when parallel is enabled.
+    // Returns the (possibly grown) ctx buffer so each worker can reuse one buffer across many rules.
+    private static int[] accumulateBigramsForRule(
+            int ruleId,
+            List<Integer> rhs,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals,
+            int[] ctx,
+            Map<Pair, Integer> freqMap
+    ) {
+        if (artificialTerminals.contains(ruleId)) return ctx;
+        RuleMetadata xMeta = metadata.get(ruleId);
+        if (xMeta == null) return ctx;
+        int vocc = xMeta.getVocc();
+        if (rhs == null || rhs.isEmpty()) return ctx;
+
+        int ctxLen = 0;
+
+        int firstElement = rhs.get(0);
+        if (firstElement < 256 || artificialTerminals.contains(firstElement)) {
+            if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+            ctx[ctxLen++] = firstElement;
+        } else {
+            RuleMetadata firstMeta = metadata.get(firstElement);
+            if (firstMeta != null) {
+                int rt = firstMeta.getRightmostTerminal();
+                int rr = firstMeta.getRightRunLength();
+                if (ctxLen + rr > ctx.length) ctx = growBuf(ctx, ctxLen + rr);
+                for (int k = 0; k < rr; k++) ctx[ctxLen++] = rt;
+            }
+        }
+
+        int midEnd = rhs.size() - 1;
+        for (int mi = 1; mi < midEnd; mi++) {
+            if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+            ctx[ctxLen++] = rhs.get(mi);
+        }
+
+        if (rhs.size() > 1) {
+            int lastElement = rhs.get(rhs.size() - 1);
+            if (lastElement < 256 || artificialTerminals.contains(lastElement)) {
+                if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+                ctx[ctxLen++] = lastElement;
+            } else {
+                RuleMetadata lastMeta = metadata.get(lastElement);
+                if (lastMeta != null) {
+                    int lt = lastMeta.getLeftmostTerminal();
+                    int lr = lastMeta.getLeftRunLength();
+                    if (ctxLen + lr > ctx.length) ctx = growBuf(ctx, ctxLen + lr);
+                    for (int k = 0; k < lr; k++) ctx[ctxLen++] = lt;
+                }
+            }
+        }
+
+        int X1 = rhs.get(0);
+        int X2 = rhs.get(rhs.size() - 1);
+        boolean leftIsTerminalOrSingleBlock  = isTerminalOrSingleBlock(X1, metadata, artificialTerminals);
+        boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlock(X2, metadata, artificialTerminals);
+
+        int i = 0;
+        while (i < ctxLen) {
+            int c = ctx[i];
+            int j = i + 1;
+            while (j < ctxLen && ctx[j] == c) j++;
+            int d = j - i;
+
+            if (d == 1) {
+                if (j < ctxLen) {
+                    int c2 = ctx[j];
+                    if (c2 != c) {
+                        freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
+                    }
+                }
+            } else {
+                boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
+                boolean isSuffixRun = (j == ctxLen && rightIsTerminalOrSingleBlock);
+
+                if (!isPrefixRun && !isSuffixRun) {
+                    int add = (d / 2) * vocc;
+                    if (add > 0) {
+                        freqMap.merge(new Pair(c, c), add, Integer::sum);
+                    }
+                }
+
+                if (j < ctxLen) {
+                    int c2 = ctx[j];
+                    if (c2 != c) {
+                        freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
+                    }
+                }
+            }
+            i = j;
+        }
+        return ctx;
+    }
+
+    /**
+     * Parallel bigram frequency computation. Splits ruleIds across workers; each builds a thread-local
+     * HashMap<Pair,Integer>, results merged single-threaded at the end. Falls back to the serial path
+     * when rule count is below {@link #MIN_RULES_FOR_PARALLEL} or when no pool is supplied.
+     */
+    public static Map<Pair, Integer> computeBigramFrequenciesParallel(
+            Parser.ParsedGrammar grammar,
+            Set<Integer> artificialTerminals,
+            ForkJoinPool pool
+    ) {
+        final Map<Integer, List<Integer>> rules = grammar.grammarRules();
+        if (pool == null || rules.size() < MIN_RULES_FOR_PARALLEL) {
+            return computeBigramFrequenciesCombined(grammar, artificialTerminals, false, null);
+        }
+
+        final Map<Integer, RuleMetadata> metadata = grammar.metadata();
+        final int n = rules.size();
+        final int[] ruleIds = new int[n];
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] rhsArr = new List[n];
+        int idx = 0;
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            ruleIds[idx] = e.getKey();
+            rhsArr[idx] = e.getValue();
+            idx++;
+        }
+
+        final int p = pool.getParallelism();
+        List<Future<HashMap<Pair, Integer>>> futures = new ArrayList<>(p);
+        for (int t = 0; t < p; t++) {
+            final int start = (int) ((long) n * t / p);
+            final int end   = (int) ((long) n * (t + 1) / p);
+            if (start >= end) continue;
+            futures.add(pool.submit(() -> {
+                HashMap<Pair, Integer> local = new HashMap<>(Math.max(16, (end - start) / 4));
+                int[] ctx = new int[256];
+                for (int i = start; i < end; i++) {
+                    ctx = accumulateBigramsForRule(
+                            ruleIds[i], rhsArr[i], metadata, artificialTerminals, ctx, local);
+                }
+                return local;
+            }));
+        }
+
+        HashMap<Pair, Integer> merged = new HashMap<>();
+        try {
+            for (Future<HashMap<Pair, Integer>> f : futures) {
+                HashMap<Pair, Integer> local = f.get();
+                if (merged.isEmpty()) {
+                    merged = local;
+                } else {
+                    for (Map.Entry<Pair, Integer> e : local.entrySet()) {
+                        merged.merge(e.getKey(), e.getValue(), Integer::sum);
+                    }
+                }
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel frequency computation interrupted", ie);
+        } catch (ExecutionException ee) {
+            throw new RuntimeException("Parallel frequency computation failed", ee.getCause());
+        }
+        return merged;
+    }
+
 
 
 
@@ -1046,6 +1263,173 @@ private static void uncrossNonRepeating(
         return sym > 255 && rules.containsKey(sym) && !artificialTerminals.contains(sym);
     }
 
+    // ── Parallel uncrossing ────────────────────────────────────────────────────
+    //
+    // Each rule's RHS rewrite is independent of every other rule's RHS (only reads
+    // `metadata` and `artificialTerminals`, plus `rules.containsKey` for variable
+    // detection). We snapshot the rule IDs + RHS references, compute all new RHSs
+    // in parallel into an array, then commit them back to `rules` single-threaded.
+    // `deleteEmptyRulesAndRewire` stays serial — it mutates the map structurally.
+
+    static void uncrossBigramsParallel(
+            int c1, int c2,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals,
+            ForkJoinPool pool
+    ) {
+        if (pool == null || rules.size() < MIN_RULES_FOR_PARALLEL) {
+            uncrossBigrams(c1, c2, rules, metadata, artificialTerminals);
+            return;
+        }
+
+        final int n = rules.size();
+        final int[] ruleIds = new int[n];
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] origRhs = new List[n];
+        int idx = 0;
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            ruleIds[idx] = e.getKey();
+            origRhs[idx] = e.getValue();
+            idx++;
+        }
+
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] newRhs = new List[n];
+
+        final boolean repeating = (c1 == c2);
+        final int p = pool.getParallelism();
+        List<Future<?>> futures = new ArrayList<>(p);
+        for (int t = 0; t < p; t++) {
+            final int start = (int) ((long) n * t / p);
+            final int end   = (int) ((long) n * (t + 1) / p);
+            if (start >= end) continue;
+            futures.add(pool.submit(() -> {
+                for (int i = start; i < end; i++) {
+                    int ruleId = ruleIds[i];
+                    if (artificialTerminals.contains(ruleId)) continue;
+                    List<Integer> rhs = origRhs[i];
+                    if (rhs == null || rhs.isEmpty()) continue;
+                    newRhs[i] = repeating
+                            ? buildUncrossRepeatingRhs(rhs, c1, rules, metadata, artificialTerminals)
+                            : buildUncrossNonRepeatingRhs(rhs, c1, c2, rules, metadata, artificialTerminals);
+                }
+            }));
+        }
+
+        try {
+            for (Future<?> f : futures) f.get();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel uncross interrupted", ie);
+        } catch (ExecutionException ee) {
+            throw new RuntimeException("Parallel uncross task failed", ee.getCause());
+        }
+
+        // Serial commit phase: structural map mutation only happens here.
+        for (int i = 0; i < n; i++) {
+            if (newRhs[i] != null) {
+                rules.put(ruleIds[i], newRhs[i]);
+            }
+        }
+
+        deleteEmptyRulesAndRewire(rules);
+    }
+
+    // Mirrors uncrossNonRepeating's inner loop but returns a new RHS instead of mutating in place.
+    private static List<Integer> buildUncrossNonRepeatingRhs(
+            List<Integer> originalRhs,
+            int c1, int c2,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals
+    ) {
+        final int sz = originalRhs.size();
+        List<Integer> newRhs = new ArrayList<>(sz);
+
+        for (int i = 0; i < sz; i++) {
+            int sym = originalRhs.get(i);
+            boolean isFirstPos = (i == 0);
+            boolean isLastPos  = (i == sz - 1);
+
+            if (!isVariable(sym, rules, artificialTerminals)) {
+                if ((isFirstPos && sym == c2) || (isLastPos && sym == c1)) {
+                    continue;
+                }
+            }
+
+            if (isVariable(sym, rules, artificialTerminals)) {
+                RuleMetadata meta = metadata.get(sym);
+                if (meta != null && meta.getLeftmostTerminal() == c2 && !isFirstPos) {
+                    newRhs.add(c2);
+                }
+            }
+
+            newRhs.add(sym);
+
+            if (isVariable(sym, rules, artificialTerminals)) {
+                RuleMetadata meta = metadata.get(sym);
+                if (meta != null && meta.getRightmostTerminal() == c1 && !isLastPos) {
+                    newRhs.add(c1);
+                }
+            }
+        }
+        return newRhs;
+    }
+
+    // Mirrors uncrossRepeating's inner logic but returns a new RHS instead of mutating in place.
+    private static List<Integer> buildUncrossRepeatingRhs(
+            List<Integer> origRhs,
+            int c,
+            Map<Integer, List<Integer>> rules,
+            Map<Integer, RuleMetadata> metadata,
+            Set<Integer> artificialTerminals
+    ) {
+        final int n = origRhs.size();
+        int left = 0;
+        while (left < n) {
+            int sym = origRhs.get(left);
+            if (sym == c || isSingleBlockOf(sym, c, metadata, artificialTerminals)) {
+                left++;
+            } else break;
+        }
+        int right = n;
+        while (right > left) {
+            int sym = origRhs.get(right - 1);
+            if (sym == c || isSingleBlockOf(sym, c, metadata, artificialTerminals)) {
+                right--;
+            } else break;
+        }
+
+        List<Integer> newRhs = new ArrayList<>(right - left);
+        for (int i = left; i < right; i++) {
+            int sym = origRhs.get(i);
+            boolean isFirst = (i == left);
+            boolean isLast  = (i == right - 1);
+
+            if (isVariable(sym, rules, artificialTerminals)) {
+                RuleMetadata m = metadata.get(sym);
+                if (m != null && m.getLeftmostTerminal() == c && !isFirst) {
+                    for (int j = 0; j < m.getLeftRunLength(); j++) {
+                        newRhs.add(c);
+                    }
+                }
+            }
+
+            newRhs.add(sym);
+
+            if (isVariable(sym, rules, artificialTerminals)) {
+                RuleMetadata m = metadata.get(sym);
+                if (m != null && m.getRightmostTerminal() == c && !isLast) {
+                    for (int j = 0; j < m.getRightRunLength(); j++) {
+                        newRhs.add(c);
+                    }
+                }
+            }
+        }
+        return newRhs;
+    }
+
 
 
 
@@ -1145,6 +1529,113 @@ private static void uncrossNonRepeating(
         return false;
     }
 
+    /**
+     * Parallel variant of {@link #replaceBigramInRules}. Each rule's RHS rewrite is independent,
+     * so we snapshot ruleIds + RHS refs, compute new RHSs in parallel into a results array, then
+     * commit single-threaded.
+     */
+    public static void replaceBigramInRulesParallel(
+            int c1, int c2, int newRuleId,
+            Map<Integer, List<Integer>> rules,
+            Set<Integer> artificialTerminals,
+            ForkJoinPool pool
+    ) {
+        if (pool == null || rules.size() < MIN_RULES_FOR_PARALLEL) {
+            replaceBigramInRules(c1, c2, newRuleId, rules, artificialTerminals);
+            return;
+        }
+
+        final boolean repeating = (c1 == c2);
+        final int n = rules.size();
+        final int[] ruleIds = new int[n];
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] origRhs = new List[n];
+        int idx = 0;
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            ruleIds[idx] = e.getKey();
+            origRhs[idx] = e.getValue();
+            idx++;
+        }
+
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] newRhs = new List[n];
+
+        final int p = pool.getParallelism();
+        List<Future<?>> futures = new ArrayList<>(p);
+        for (int t = 0; t < p; t++) {
+            final int start = (int) ((long) n * t / p);
+            final int end   = (int) ((long) n * (t + 1) / p);
+            if (start >= end) continue;
+            futures.add(pool.submit(() -> {
+                for (int i = start; i < end; i++) {
+                    int ruleId = ruleIds[i];
+                    if (artificialTerminals.contains(ruleId)) continue;
+                    List<Integer> rhs = origRhs[i];
+                    if (rhs == null || rhs.isEmpty()) continue;
+                    if (!containsBigram(rhs, c1, c2, repeating)) continue;
+                    newRhs[i] = buildReplacedRhs(rhs, c1, c2, newRuleId, repeating);
+                }
+            }));
+        }
+
+        try {
+            for (Future<?> f : futures) f.get();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel replace interrupted", ie);
+        } catch (ExecutionException ee) {
+            throw new RuntimeException("Parallel replace task failed", ee.getCause());
+        }
+
+        for (int i = 0; i < n; i++) {
+            if (newRhs[i] != null) {
+                rules.put(ruleIds[i], newRhs[i]);
+            }
+        }
+    }
+
+    // Mirrors the inner rewrite of replaceBigramInRules; returns a fresh RHS list.
+    private static List<Integer> buildReplacedRhs(
+            List<Integer> rhs, int c1, int c2, int newRuleId, boolean repeating
+    ) {
+        final List<Integer> out = new ArrayList<>(rhs.size());
+        if (!repeating) {
+            for (int i = 0; i < rhs.size(); ) {
+                if (i + 1 < rhs.size() && rhs.get(i) == c1 && rhs.get(i + 1) == c2) {
+                    out.add(newRuleId);
+                    i += 2;
+                } else {
+                    out.add(rhs.get(i));
+                    i++;
+                }
+            }
+        } else {
+            final int c = c1;
+            for (int i = 0; i < rhs.size(); ) {
+                int s = rhs.get(i);
+                if (s != c) {
+                    out.add(s);
+                    i++;
+                    continue;
+                }
+                int j = i + 1;
+                while (j < rhs.size() && rhs.get(j) == c) j++;
+                int d = j - i;
+
+                if (d >= 2) {
+                    int numNewRules = d / 2;
+                    int leftover = d % 2;
+                    for (int t = 0; t < numNewRules; t++) out.add(newRuleId);
+                    if (leftover == 1) out.add(c);
+                } else {
+                    out.add(c);
+                }
+                i = j;
+            }
+        }
+        return out;
+    }
+
 
     //As a tie breaker decide which one to keep according to Lexicographical Order.
     public static Pair getMostFrequentBigram(
@@ -1233,5 +1724,385 @@ private static void uncrossNonRepeating(
     }
 
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // View-based hot-path helpers
+    //
+    // These mirror the Map-based methods above but take a RuleMetadataView, which
+    // exposes per-rule fields via int[] indexed reads instead of HashMap lookups +
+    // autoboxing. Used only by recompressNTimes and its parallel variants. The
+    // Map-based originals remain for tests, UI, and Main's CLI menu paths.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    // Per-rule context build + scan, view variant. Mirrors {@link #accumulateBigramsForRule}.
+    private static int[] accumulateBigramsForRuleView(
+            int ruleId,
+            List<Integer> rhs,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals,
+            int[] ctx,
+            Map<Pair, Integer> freqMap
+    ) {
+        if (artificialTerminals.contains(ruleId)) return ctx;
+        if (!view.has(ruleId)) return ctx;
+        int vocc = view.getVocc(ruleId);
+        if (rhs == null || rhs.isEmpty()) return ctx;
+
+        int ctxLen = 0;
+
+        int firstElement = rhs.get(0);
+        if (firstElement < 256 || artificialTerminals.contains(firstElement)) {
+            if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+            ctx[ctxLen++] = firstElement;
+        } else if (firstElement >= 0 && firstElement < view.size()) {
+            int rt = view.getRightmostTerminal(firstElement);
+            int rr = view.getRightRunLength(firstElement);
+            if (rt != -1 && rr > 0) {
+                if (ctxLen + rr > ctx.length) ctx = growBuf(ctx, ctxLen + rr);
+                for (int k = 0; k < rr; k++) ctx[ctxLen++] = rt;
+            }
+        }
+
+        int midEnd = rhs.size() - 1;
+        for (int mi = 1; mi < midEnd; mi++) {
+            if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+            ctx[ctxLen++] = rhs.get(mi);
+        }
+
+        if (rhs.size() > 1) {
+            int lastElement = rhs.get(rhs.size() - 1);
+            if (lastElement < 256 || artificialTerminals.contains(lastElement)) {
+                if (ctxLen >= ctx.length) ctx = growBuf(ctx, ctxLen + 1);
+                ctx[ctxLen++] = lastElement;
+            } else if (lastElement >= 0 && lastElement < view.size()) {
+                int lt = view.getLeftmostTerminal(lastElement);
+                int lr = view.getLeftRunLength(lastElement);
+                if (lt != -1 && lr > 0) {
+                    if (ctxLen + lr > ctx.length) ctx = growBuf(ctx, ctxLen + lr);
+                    for (int k = 0; k < lr; k++) ctx[ctxLen++] = lt;
+                }
+            }
+        }
+
+        int X1 = rhs.get(0);
+        int X2 = rhs.get(rhs.size() - 1);
+        boolean leftIsTerminalOrSingleBlock  = isTerminalOrSingleBlockView(X1, view, artificialTerminals);
+        boolean rightIsTerminalOrSingleBlock = isTerminalOrSingleBlockView(X2, view, artificialTerminals);
+
+        int i = 0;
+        while (i < ctxLen) {
+            int c = ctx[i];
+            int j = i + 1;
+            while (j < ctxLen && ctx[j] == c) j++;
+            int d = j - i;
+
+            if (d == 1) {
+                if (j < ctxLen) {
+                    int c2 = ctx[j];
+                    if (c2 != c) freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
+                }
+            } else {
+                boolean isPrefixRun = (i == 0 && leftIsTerminalOrSingleBlock);
+                boolean isSuffixRun = (j == ctxLen && rightIsTerminalOrSingleBlock);
+
+                if (!isPrefixRun && !isSuffixRun) {
+                    int add = (d / 2) * vocc;
+                    if (add > 0) freqMap.merge(new Pair(c, c), add, Integer::sum);
+                }
+
+                if (j < ctxLen) {
+                    int c2 = ctx[j];
+                    if (c2 != c) freqMap.merge(new Pair(c, c2), vocc, Integer::sum);
+                }
+            }
+            i = j;
+        }
+        return ctx;
+    }
+
+    private static boolean isTerminalOrSingleBlockView(int symbol, RuleMetadataView view, Set<Integer> artificialTerminals) {
+        if (symbol < 256 || artificialTerminals.contains(symbol)) return true;
+        if (symbol < 0 || symbol >= view.size()) return false;
+        return view.has(symbol) && view.isSingleBlock(symbol);
+    }
+
+    private static boolean isSingleBlockOfView(
+            int symbol, int targetTerminal,
+            RuleMetadataView view, Set<Integer> artificialTerminals
+    ) {
+        if (symbol < 256 || artificialTerminals.contains(symbol)) {
+            return symbol == targetTerminal;
+        }
+        if (symbol < 0 || symbol >= view.size() || !view.has(symbol)) return false;
+        return view.isSingleBlock(symbol)
+                && view.getLeftmostTerminal(symbol) == targetTerminal
+                && view.getRightmostTerminal(symbol) == targetTerminal;
+    }
+
+    // Variable check via view: replaces sym > 255 && rules.containsKey(sym) && !artificialTerminals.contains(sym).
+    // view.has(sym) already excludes artificial terminals and out-of-range ids.
+    private static boolean isVariableView(int sym, RuleMetadataView view) {
+        return sym > 255 && sym < view.size() && view.has(sym);
+    }
+
+    // Serial bigram frequency computation, view variant.
+    public static Map<Pair, Integer> computeBigramFrequenciesView(
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        Map<Pair, Integer> freqMap = new HashMap<>(rules.size());
+        int[] ctx = new int[256];
+        for (Map.Entry<Integer, List<Integer>> entry : rules.entrySet()) {
+            ctx = accumulateBigramsForRuleView(entry.getKey(), entry.getValue(),
+                    view, artificialTerminals, ctx, freqMap);
+        }
+        return freqMap;
+    }
+
+    // Parallel bigram frequency computation, view variant.
+    public static Map<Pair, Integer> computeBigramFrequenciesParallelView(
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals,
+            ForkJoinPool pool
+    ) {
+        if (pool == null || rules.size() < MIN_RULES_FOR_PARALLEL) {
+            return computeBigramFrequenciesView(rules, view, artificialTerminals);
+        }
+        final int n = rules.size();
+        final int[] ruleIds = new int[n];
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] rhsArr = new List[n];
+        int idx = 0;
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            ruleIds[idx] = e.getKey();
+            rhsArr[idx] = e.getValue();
+            idx++;
+        }
+
+        final int p = pool.getParallelism();
+        List<Future<HashMap<Pair, Integer>>> futures = new ArrayList<>(p);
+        for (int t = 0; t < p; t++) {
+            final int start = (int) ((long) n * t / p);
+            final int end   = (int) ((long) n * (t + 1) / p);
+            if (start >= end) continue;
+            futures.add(pool.submit(() -> {
+                HashMap<Pair, Integer> local = new HashMap<>(Math.max(16, (end - start) / 4));
+                int[] c = new int[256];
+                for (int i = start; i < end; i++) {
+                    c = accumulateBigramsForRuleView(ruleIds[i], rhsArr[i],
+                            view, artificialTerminals, c, local);
+                }
+                return local;
+            }));
+        }
+
+        HashMap<Pair, Integer> merged = new HashMap<>();
+        try {
+            for (Future<HashMap<Pair, Integer>> f : futures) {
+                HashMap<Pair, Integer> local = f.get();
+                if (merged.isEmpty()) merged = local;
+                else {
+                    for (Map.Entry<Pair, Integer> e : local.entrySet()) {
+                        merged.merge(e.getKey(), e.getValue(), Integer::sum);
+                    }
+                }
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel frequency (view) interrupted", ie);
+        } catch (ExecutionException ee) {
+            throw new RuntimeException("Parallel frequency (view) failed", ee.getCause());
+        }
+        return merged;
+    }
+
+    // Uncross dispatch, view variant.
+    static void uncrossBigramsView(
+            int c1, int c2,
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        if (c1 == c2) {
+            uncrossRepeatingView(c1, rules, view, artificialTerminals);
+        } else {
+            uncrossNonRepeatingView(c1, c2, rules, view, artificialTerminals);
+        }
+        deleteEmptyRulesAndRewire(rules);
+    }
+
+    private static void uncrossNonRepeatingView(
+            int c1, int c2,
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            int ruleId = e.getKey();
+            if (artificialTerminals.contains(ruleId)) continue;
+            List<Integer> originalRhs = e.getValue();
+            if (originalRhs.isEmpty()) continue;
+            e.setValue(buildUncrossNonRepeatingRhsView(originalRhs, c1, c2, view, artificialTerminals));
+        }
+    }
+
+    private static void uncrossRepeatingView(
+            int c,
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            int ruleId = e.getKey();
+            if (artificialTerminals.contains(ruleId)) continue;
+            List<Integer> origRhs = e.getValue();
+            if (origRhs.isEmpty()) continue;
+            e.setValue(buildUncrossRepeatingRhsView(origRhs, c, view, artificialTerminals));
+        }
+    }
+
+    // Parallel uncross, view variant.
+    static void uncrossBigramsParallelView(
+            int c1, int c2,
+            Map<Integer, List<Integer>> rules,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals,
+            ForkJoinPool pool
+    ) {
+        if (pool == null || rules.size() < MIN_RULES_FOR_PARALLEL) {
+            uncrossBigramsView(c1, c2, rules, view, artificialTerminals);
+            return;
+        }
+
+        final int n = rules.size();
+        final int[] ruleIds = new int[n];
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] origRhs = new List[n];
+        int idx = 0;
+        for (Map.Entry<Integer, List<Integer>> e : rules.entrySet()) {
+            ruleIds[idx] = e.getKey();
+            origRhs[idx] = e.getValue();
+            idx++;
+        }
+
+        @SuppressWarnings("unchecked")
+        final List<Integer>[] newRhs = new List[n];
+        final boolean repeating = (c1 == c2);
+        final int p = pool.getParallelism();
+        List<Future<?>> futures = new ArrayList<>(p);
+        for (int t = 0; t < p; t++) {
+            final int start = (int) ((long) n * t / p);
+            final int end   = (int) ((long) n * (t + 1) / p);
+            if (start >= end) continue;
+            futures.add(pool.submit(() -> {
+                for (int i = start; i < end; i++) {
+                    int ruleId = ruleIds[i];
+                    if (artificialTerminals.contains(ruleId)) continue;
+                    List<Integer> rhs = origRhs[i];
+                    if (rhs == null || rhs.isEmpty()) continue;
+                    newRhs[i] = repeating
+                            ? buildUncrossRepeatingRhsView(rhs, c1, view, artificialTerminals)
+                            : buildUncrossNonRepeatingRhsView(rhs, c1, c2, view, artificialTerminals);
+                }
+            }));
+        }
+
+        try {
+            for (Future<?> f : futures) f.get();
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Parallel uncross (view) interrupted", ie);
+        } catch (ExecutionException ee) {
+            throw new RuntimeException("Parallel uncross (view) failed", ee.getCause());
+        }
+
+        for (int i = 0; i < n; i++) {
+            if (newRhs[i] != null) rules.put(ruleIds[i], newRhs[i]);
+        }
+        deleteEmptyRulesAndRewire(rules);
+    }
+
+    private static List<Integer> buildUncrossNonRepeatingRhsView(
+            List<Integer> originalRhs,
+            int c1, int c2,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        final int sz = originalRhs.size();
+        List<Integer> newRhs = new ArrayList<>(sz);
+
+        for (int i = 0; i < sz; i++) {
+            int sym = originalRhs.get(i);
+            boolean isFirstPos = (i == 0);
+            boolean isLastPos  = (i == sz - 1);
+
+            if (!isVariableView(sym, view) || artificialTerminals.contains(sym)) {
+                if ((isFirstPos && sym == c2) || (isLastPos && sym == c1)) continue;
+            }
+
+            if (isVariableView(sym, view) && !artificialTerminals.contains(sym)) {
+                if (view.getLeftmostTerminal(sym) == c2 && !isFirstPos) {
+                    newRhs.add(c2);
+                }
+            }
+
+            newRhs.add(sym);
+
+            if (isVariableView(sym, view) && !artificialTerminals.contains(sym)) {
+                if (view.getRightmostTerminal(sym) == c1 && !isLastPos) {
+                    newRhs.add(c1);
+                }
+            }
+        }
+        return newRhs;
+    }
+
+    private static List<Integer> buildUncrossRepeatingRhsView(
+            List<Integer> origRhs,
+            int c,
+            RuleMetadataView view,
+            Set<Integer> artificialTerminals
+    ) {
+        final int n = origRhs.size();
+        int left = 0;
+        while (left < n) {
+            int sym = origRhs.get(left);
+            if (sym == c || isSingleBlockOfView(sym, c, view, artificialTerminals)) {
+                left++;
+            } else break;
+        }
+        int right = n;
+        while (right > left) {
+            int sym = origRhs.get(right - 1);
+            if (sym == c || isSingleBlockOfView(sym, c, view, artificialTerminals)) {
+                right--;
+            } else break;
+        }
+
+        List<Integer> newRhs = new ArrayList<>(right - left);
+        for (int i = left; i < right; i++) {
+            int sym = origRhs.get(i);
+            boolean isFirst = (i == left);
+            boolean isLast  = (i == right - 1);
+
+            if (isVariableView(sym, view) && !artificialTerminals.contains(sym)) {
+                if (view.getLeftmostTerminal(sym) == c && !isFirst) {
+                    int runLen = view.getLeftRunLength(sym);
+                    for (int j = 0; j < runLen; j++) newRhs.add(c);
+                }
+            }
+
+            newRhs.add(sym);
+
+            if (isVariableView(sym, view) && !artificialTerminals.contains(sym)) {
+                if (view.getRightmostTerminal(sym) == c && !isLast) {
+                    int runLen = view.getRightRunLength(sym);
+                    for (int j = 0; j < runLen; j++) newRhs.add(c);
+                }
+            }
+        }
+        return newRhs;
+    }
 
 }

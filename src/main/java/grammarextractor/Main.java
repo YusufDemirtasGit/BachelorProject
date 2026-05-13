@@ -580,7 +580,7 @@
                         Path grammarFile17 = Path.of(scanner.nextLine().trim());
                         //Path grammarFile17 = Path.of("extracted_grammar.txt");
                         Parser.ParsedGrammar original17 = Parser.parseFile(grammarFile17);
-                        Recompressor.recompressNTimes(original17, 0,1,true,false, "Paper_Test_recompressed.txt");
+                        Recompressor.recompressNTimes(original17, 0,2,true,false, "Paper_Test_recompressed.txt",true,2);
 
                         break;
                     case 15: {
