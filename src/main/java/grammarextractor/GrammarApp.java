@@ -31,6 +31,17 @@ public class GrammarApp extends JFrame {
         new Color(0xAA, 0x44, 0xEE), new Color(0x00, 0xCC, 0xCC)
     };
 
+    // ── Engine modes (chooses which recompression code path the GUI exercises) ──
+    enum EngineMode {
+        LEGACY_MAP("Legacy (Map-based, serial)"),
+        OPTIMIZED_SERIAL("Optimized serial (View-based)"),
+        OPTIMIZED_PARALLEL("Optimized parallel (View + threads)");
+
+        final String label;
+        EngineMode(String label) { this.label = label; }
+        @Override public String toString() { return label; }
+    }
+
     // ── Pipeline modes ───────────────────────────────────────────────────────
     enum Pipeline {
         FULL_ROUNDTRIP("Full roundtrip  (Compress + Extract + Recompress)"),
@@ -67,7 +78,8 @@ public class GrammarApp extends JFrame {
     private final JPanel     deck  = new JPanel(cards);
 
     private JTextField tfLength;
-    private JSpinner   spPasses, spFrom, spTo;
+    private JSpinner   spPasses, spFrom, spTo, spThreads;
+    private JComboBox<EngineMode> cbEngine;
     private JTextField tfAlphabet;
     private JPanel     reportHolder;
     private JSplitPane techSplit;
@@ -523,6 +535,19 @@ public class GrammarApp extends JFrame {
         spFrom   = spinner(20, 0, Integer.MAX_VALUE - 1, 1);
         spTo     = spinner(80, 1, Integer.MAX_VALUE, 1);
 
+        // Engine selector + thread count. Threads spinner is only enabled for the parallel mode.
+        cbEngine = new JComboBox<>(EngineMode.values());
+        cbEngine.setSelectedItem(EngineMode.OPTIMIZED_SERIAL);
+        cbEngine.setBackground(C_SURF); cbEngine.setForeground(C_TEXT);
+        cbEngine.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        cbEngine.setBorder(BorderFactory.createLineBorder(C_BORDER, 1, true));
+
+        int defaultThreads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+        spThreads = spinner(defaultThreads, 1, 64, 1);
+        spThreads.setEnabled(false);
+        cbEngine.addActionListener(e ->
+            spThreads.setEnabled(cbEngine.getSelectedItem() == EngineMode.OPTIMIZED_PARALLEL));
+
         extractParamsPanel = new JPanel();
         extractParamsPanel.setLayout(new BoxLayout(extractParamsPanel, BoxLayout.Y_AXIS));
         extractParamsPanel.setBackground(C_PANEL);
@@ -545,6 +570,10 @@ public class GrammarApp extends JFrame {
         sharedPanel.add(fRow("Pipeline:", cbPipeline));
         sharedPanel.add(Box.createVerticalStrut(8));
         sharedPanel.add(fRow("Max passes (0 = unlimited):", spPasses));
+        sharedPanel.add(Box.createVerticalStrut(8));
+        sharedPanel.add(fRow("Engine:", cbEngine));
+        sharedPanel.add(Box.createVerticalStrut(8));
+        sharedPanel.add(fRow("Threads (parallel only):", spThreads));
         sharedPanel.add(Box.createVerticalStrut(8));
         sharedPanel.add(extractParamsPanel);
 
@@ -616,6 +645,8 @@ public class GrammarApp extends JFrame {
         int passes = (int) spPasses.getValue();
         int from   = (int) spFrom.getValue();
         int to     = (int) spTo.getValue();
+        EngineMode engine = (EngineMode) cbEngine.getSelectedItem();
+        int threads = (int) spThreads.getValue();
 
         if (useExistingFile && techSelectedFile == null) {
             JOptionPane.showMessageDialog(this, "Select a file from the list.", "No file", JOptionPane.WARNING_MESSAGE);
@@ -681,6 +712,8 @@ public class GrammarApp extends JFrame {
         final boolean fromFile = useExistingFile;
         final Path fpath = techSelectedFile;
         final long startMs = System.currentTimeMillis();
+        final EngineMode fEngine = engine;
+        final int fThreads = threads;
 
         SwingWorker<TechnicalReport, String> w = new SwingWorker<>() {
             @Override protected TechnicalReport doInBackground() throws Exception {
@@ -692,10 +725,10 @@ public class GrammarApp extends JFrame {
                     int adjFrom = Math.min(ffrom, textLen - 1);
                     int adjTo   = Math.min(fto,   textLen);
                     if (adjFrom >= adjTo) adjTo = Math.min(adjFrom + 50, textLen);
-                    return pipelineCore(g, txt, fpasses, adjFrom, adjTo, pipe, this::publish);
+                    return pipelineCore(g, txt, fpasses, adjFrom, adjTo, pipe, fEngine, fThreads, this::publish);
                 } else {
                     publish("Generating random text (N=" + fn + ")...");
-                    return pipeline(fn, fpasses, ffrom, fto, fa, pipe, this::publish);
+                    return pipeline(fn, fpasses, ffrom, fto, fa, pipe, fEngine, fThreads, this::publish);
                 }
             }
             @Override protected void process(List<String> chunks) {
@@ -728,6 +761,67 @@ public class GrammarApp extends JFrame {
         w.execute();
     }
 
+    /** Result of one recompression pass: the picked bigram + its frequency, or null if the pass stopped. */
+    private record OnePass(Pair bg, int freq) {}
+
+    /**
+     * One pass of recompression, dispatched to the selected engine. Mutates {@code rules}/{@code art}
+     * in place. Returns null if no compressible bigram remains (caller should break the pass loop).
+     */
+    private OnePass runOnePassAndApply(
+            int passNum,
+            Map<Integer, List<Integer>> rules,
+            List<Integer> seq,
+            Set<Integer> art,
+            int newRuleId,
+            EngineMode engine,
+            int threads,
+            ProgressCallback progress
+    ) {
+        Pair bg;
+        int freq;
+        if (engine == EngineMode.LEGACY_MAP) {
+            progress.update("Pass " + passNum + ": computing metadata (legacy)...");
+            Map<Integer, RuleMetadata> m = RuleMetadata.computeAll(rules, seq, art);
+            progress.update("Pass " + passNum + ": computing bigram frequencies...");
+            Map<Pair, Integer> freqs = Recompressor.computeBigramFrequencies(
+                    new Parser.ParsedGrammar(rules, seq, m), art, false, null);
+            if (freqs.isEmpty()) return null;
+            bg = Recompressor.getMostFrequentBigram(freqs, art);
+            if (bg == null || freqs.getOrDefault(bg, 0) <= 1) return null;
+            freq = freqs.get(bg);
+            progress.update("Pass " + passNum + ": uncrossing + replacing ("
+                    + RecompressionViewer.sym(bg.first) + "," + RecompressionViewer.sym(bg.second) + ")...");
+            Recompressor.uncrossBigrams(bg.first, bg.second, rules, m, art);
+            Recompressor.replaceBigramInRules(bg.first, bg.second, newRuleId, rules, art);
+        } else {
+            java.util.concurrent.ForkJoinPool pool =
+                    (engine == EngineMode.OPTIMIZED_PARALLEL) ? Recompressor.getPool(threads) : null;
+            progress.update("Pass " + passNum + ": computing metadata (view"
+                    + (pool != null ? ", parallel" : "") + ")...");
+            RuleMetadataView view = RuleMetadata.computeAllView(
+                    new Parser.ParsedGrammar(rules, seq, Collections.emptyMap()), art, pool);
+            progress.update("Pass " + passNum + ": computing bigram frequencies...");
+            Map<Pair, Integer> freqs = (pool != null)
+                    ? Recompressor.computeBigramFrequenciesParallelView(rules, view, art, pool)
+                    : Recompressor.computeBigramFrequenciesView(rules, view, art);
+            if (freqs.isEmpty()) return null;
+            bg = Recompressor.getMostFrequentBigram(freqs, art);
+            if (bg == null || freqs.getOrDefault(bg, 0) <= 1) return null;
+            freq = freqs.get(bg);
+            progress.update("Pass " + passNum + ": uncrossing + replacing ("
+                    + RecompressionViewer.sym(bg.first) + "," + RecompressionViewer.sym(bg.second) + ")...");
+            if (pool != null) {
+                Recompressor.uncrossBigramsParallelView(bg.first, bg.second, rules, view, art, pool);
+                Recompressor.replaceBigramInRulesParallel(bg.first, bg.second, newRuleId, rules, art, pool);
+            } else {
+                Recompressor.uncrossBigramsView(bg.first, bg.second, rules, view, art);
+                Recompressor.replaceBigramInRules(bg.first, bg.second, newRuleId, rules, art);
+            }
+        }
+        return new OnePass(bg, freq);
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     //  Pipeline
     // ═════════════════════════════════════════════════════════════════════════
@@ -736,7 +830,8 @@ public class GrammarApp extends JFrame {
     interface ProgressCallback { void update(String msg); }
 
     private TechnicalReport pipeline(int n, int maxPasses, int from, int to, String alpha,
-                                      Pipeline pipe, ProgressCallback progress) {
+                                      Pipeline pipe, EngineMode engine, int threads,
+                                      ProgressCallback progress) {
         Random rnd = new Random(42);
         char[] buf = new char[n];
         for (int i = 0; i < n; i++) buf[i] = alpha.charAt(rnd.nextInt(alpha.length()));
@@ -750,12 +845,13 @@ public class GrammarApp extends JFrame {
                 new Parser.ParsedGrammar(new HashMap<>(), flatSeq, Collections.emptyMap()),
                 Collections.emptySet()));
 
-        return pipelineCore(orig, input, maxPasses, from, to, pipe, progress);
+        return pipelineCore(orig, input, maxPasses, from, to, pipe, engine, threads, progress);
     }
 
     private TechnicalReport pipelineCore(Parser.ParsedGrammar orig, String inputText,
                                           int maxPasses, int from, int to,
-                                          Pipeline pipe, ProgressCallback progress) {
+                                          Pipeline pipe, EngineMode engine, int threads,
+                                          ProgressCallback progress) {
         long T0 = System.nanoTime();
         int n = inputText.length();
 
@@ -792,30 +888,21 @@ public class GrammarApp extends JFrame {
 
         long cT0 = System.nanoTime();
         if (doCompress) {
-            progress.update("PHASE:Compressing...");
+            progress.update("PHASE:Compressing (" + engine + ")...");
             for (int pass = 1; pass <= actualMax; pass++) {
                 long t0 = System.nanoTime();
-                progress.update("Pass " + pass + ": computing metadata...");
-                Map<Integer,RuleMetadata> m = RuleMetadata.computeAll(rules, seq, art);
-                progress.update("Pass " + pass + ": computing bigram frequencies...");
-                Map<Pair,Integer> freqs =
-                    Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(rules,seq,m), art, false, null);
-                if (freqs.isEmpty()) break;
-                progress.update("Pass " + pass + ": selecting most frequent bigram...");
-                Pair bg = Recompressor.getMostFrequentBigram(freqs, art);
-                if (bg == null || freqs.getOrDefault(bg, 0) <= 1) break;
-                progress.update("Pass " + pass + ": uncrossing + replacing (" + RecompressionViewer.sym(bg.first) + "," + RecompressionViewer.sym(bg.second) + ")...");
-                Recompressor.uncrossBigrams(bg.first, bg.second, rules, m, art);
-                int nid = nextId++;
-                Recompressor.replaceBigramInRules(bg.first, bg.second, nid, rules, art);
-                artR.put(nid, List.of(bg.first, bg.second));
+                int nid = nextId;
+                OnePass p = runOnePassAndApply(pass, rules, seq, art, nid, engine, threads, progress);
+                if (p == null) break;
+                nextId++;
+                artR.put(nid, List.of(p.bg.first, p.bg.second));
                 art.add(nid);
                 Recompressor.removeRedundantRules(rules, seq);
                 int sz  = rules.values().stream().mapToInt(List::size).sum() + seq.size();
                 int prv = compPasses.isEmpty() ? initSz : compPasses.get(compPasses.size()-1).grammarSize();
                 compPasses.add(new PassStats(pass, sz, rules.size(), System.nanoTime()-t0,
-                    RecompressionViewer.sym(bg.first)+"+"+ RecompressionViewer.sym(bg.second),
-                    freqs.get(bg), prv - sz));
+                    RecompressionViewer.sym(p.bg.first)+"+"+ RecompressionViewer.sym(p.bg.second),
+                    p.freq, prv - sz));
             }
         }
         long cT1 = System.nanoTime();
@@ -857,7 +944,7 @@ public class GrammarApp extends JFrame {
             exInitSz = Parser.sizeOfGrammar(exGram);
 
             if (doRecompress) {
-                progress.update("PHASE:Recompressing excerpt...");
+                progress.update("PHASE:Recompressing excerpt (" + engine + ")...");
                 Recompressor.InitializedGrammar init2 = Recompressor.initializeWithSentinelsAndRootRule(exGram);
                 Map<Integer,List<Integer>> r2 = new LinkedHashMap<>(init2.grammar().grammarRules());
                 List<Integer> s2 = new ArrayList<>(init2.grammar().sequence());
@@ -866,23 +953,17 @@ public class GrammarApp extends JFrame {
 
                 for (int pass = 1; pass <= actualMax; pass++) {
                     long t0 = System.nanoTime();
-                    progress.update("Recomp pass " + pass + "...");
-                    Map<Integer,RuleMetadata> m = RuleMetadata.computeAll(r2, s2, a2);
-                    Map<Pair,Integer> freqs =
-                        Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(r2,s2,m), a2, false, null);
-                    if (freqs.isEmpty()) break;
-                    Pair bg = Recompressor.getMostFrequentBigram(freqs, a2);
-                    if (bg == null || freqs.getOrDefault(bg, 0) <= 1) break;
-                    Recompressor.uncrossBigrams(bg.first, bg.second, r2, m, a2);
-                    int nid = nx2++;
-                    Recompressor.replaceBigramInRules(bg.first, bg.second, nid, r2, a2);
+                    int nid = nx2;
+                    OnePass p = runOnePassAndApply(pass, r2, s2, a2, nid, engine, threads, progress);
+                    if (p == null) break;
+                    nx2++;
                     a2.add(nid);
                     Recompressor.removeRedundantRules(r2, s2);
                     int sz  = r2.values().stream().mapToInt(List::size).sum() + s2.size();
                     int prv = recompPasses.isEmpty() ? exInitSz : recompPasses.get(recompPasses.size()-1).grammarSize();
                     recompPasses.add(new PassStats(pass, sz, r2.size(), System.nanoTime()-t0,
-                        RecompressionViewer.sym(bg.first)+"+"+ RecompressionViewer.sym(bg.second),
-                        freqs.get(bg), prv - sz));
+                        RecompressionViewer.sym(p.bg.first)+"+"+ RecompressionViewer.sym(p.bg.second),
+                        p.freq, prv - sz));
                 }
                 recompFinal = r2.values().stream().mapToInt(List::size).sum() + s2.size();
             }
@@ -897,26 +978,20 @@ public class GrammarApp extends JFrame {
             int nx2 = r2.keySet().stream().max(Integer::compareTo).orElse(255) + 1;
             exInitSz = r2.values().stream().mapToInt(List::size).sum() + s2.size();
 
-            progress.update("PHASE:Recompressing...");
+            progress.update("PHASE:Recompressing (" + engine + ")...");
             for (int pass = 1; pass <= actualMax; pass++) {
                 long t0 = System.nanoTime();
-                progress.update("Recomp pass " + pass + "...");
-                Map<Integer,RuleMetadata> m = RuleMetadata.computeAll(r2, s2, a2);
-                Map<Pair,Integer> freqs =
-                    Recompressor.computeBigramFrequencies(new Parser.ParsedGrammar(r2, s2, m), a2, false, null);
-                if (freqs.isEmpty()) break;
-                Pair bg = Recompressor.getMostFrequentBigram(freqs, a2);
-                if (bg == null || freqs.getOrDefault(bg, 0) <= 1) break;
-                Recompressor.uncrossBigrams(bg.first, bg.second, r2, m, a2);
-                int nid = nx2++;
-                Recompressor.replaceBigramInRules(bg.first, bg.second, nid, r2, a2);
+                int nid = nx2;
+                OnePass p = runOnePassAndApply(pass, r2, s2, a2, nid, engine, threads, progress);
+                if (p == null) break;
+                nx2++;
                 a2.add(nid);
                 Recompressor.removeRedundantRules(r2, s2);
                 int sz  = r2.values().stream().mapToInt(List::size).sum() + s2.size();
                 int prv = recompPasses.isEmpty() ? exInitSz : recompPasses.get(recompPasses.size()-1).grammarSize();
                 recompPasses.add(new PassStats(pass, sz, r2.size(), System.nanoTime()-t0,
-                    RecompressionViewer.sym(bg.first) + "+" + RecompressionViewer.sym(bg.second),
-                    freqs.get(bg), prv - sz));
+                    RecompressionViewer.sym(p.bg.first) + "+" + RecompressionViewer.sym(p.bg.second),
+                    p.freq, prv - sz));
             }
             recompFinal = r2.values().stream().mapToInt(List::size).sum() + s2.size();
         }
